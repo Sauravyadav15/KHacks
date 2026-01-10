@@ -57,7 +57,7 @@ const App: React.FC = () => {
     setMessage('');
 
     try {
-      const res = await axios.post('http://localhost:8000/chat', { text: message });
+      const res = await axios.post('http://localhost:8000/student/chat', { message: message });
       // Update with actual bot response from backend
       setChatLog([...newLog, { role: 'bot', content: res.data.reply }]);
     } catch (err) {
