@@ -1,37 +1,68 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import './App.css';
+
+// Define the shape of a chat message
+interface Message {
+  role: 'user' | 'bot';
+  content: string;
+}
 
 const App: React.FC = () => {
+  const [chatLog, setChatLog] = useState<Message[]>([]);
   const [message, setMessage] = useState('');
-  const [chatLog, setChatLog] = useState<{ role: string; content: string }[]>([]);
   const [file, setFile] = useState<File | null>(null);
 
-  // 1. Test File Upload (Teacher Role)
+  // FETCH HISTORY ON LOAD
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const res = await axios.get('http://localhost:8000/chat');
+        // Assuming backend returns an array of objects like { role: 'user', content: '...' }
+        setChatLog(res.data); 
+      } catch (err) {
+        console.error("Failed to load history", err);
+      }
+    };
+    fetchHistory();
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  // 1. Teacher Upload Logic
   const handleFileUpload = async () => {
-    if (!file) return alert("Select a file first!");
+    if (!file) return;
+
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append("file", file);
 
     try {
-      await axios.post('http://localhost:8000/upload-lesson', formData);
-      alert("Lesson uploaded to Backboard!");
+      await axios.post('http://localhost:8000/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      alert('File uploaded successfully!');
     } catch (err) {
       console.error("Upload failed", err);
+      alert('Upload failed');
     }
   };
 
-  // 2. Test Story Chat (Kid Role)
+  // 2. Story Chat Logic
   const sendMessage = async () => {
     if (!message) return;
-    const newLog = [...chatLog, { role: 'user', content: message }];
+
+    // Optimistically update UI
+    const newLog: Message[] = [...chatLog, { role: 'user', content: message }];
     setChatLog(newLog);
     setMessage('');
 
     try {
       const res = await axios.post('http://localhost:8000/chat', { text: message });
+      // Update with actual bot response from backend
       setChatLog([...newLog, { role: 'bot', content: res.data.reply }]);
     } catch (err) {
       console.error("Chat failed", err);
+      // Optional: Revert optimistic update on error if needed
     }
   };
 
@@ -49,12 +80,20 @@ const App: React.FC = () => {
       {/* Chat Section */}
       <div style={{ border: '1px solid #ccc', padding: '10px' }}>
         <h3>Kid: Story Chat</h3>
-        <div style={{ height: '200px', overflowY: 'scroll', background: '#f9f9f9', marginBottom: '10px' }}>
+        <div style={{ height: '200px', overflowY: 'scroll', background: '#f9f9f9', marginBottom: '10px', padding: '10px' }}>
           {chatLog.map((log, i) => (
-            <p key={i}><strong>{log.role}:</strong> {log.content}</p>
+            <p key={i} style={{ color: log.role === 'bot' ? 'blue' : 'black', margin: '5px 0' }}>
+              <strong>{log.role === 'user' ? 'You' : 'StoryBot'}:</strong> {log.content}
+            </p>
           ))}
         </div>
-        <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Say something..." />
+        <input 
+          value={message} 
+          onChange={(e) => setMessage(e.target.value)} 
+          placeholder="Say something..." 
+          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+          style={{ width: '70%', marginRight: '10px' }}
+        />
         <button onClick={sendMessage}>Send</button>
       </div>
     </div>
