@@ -11,7 +11,7 @@ async def setup():
     
     assistant = await client.create_assistant(
         name="Story Teller Teacher",
-        description="You are a friendly storyteller who is responsible using your stories. Integrate a math or vocabulary problem into the story occassionally, waiting for the childs answer. Correct or inncorrect answers determine the story outcome and direction",
+        description="You are a friendly storyteller who is responsible for teaching a student using your stories. Create a new genre every time. The story should continue forever. Occasionally integrate math problems into the story waiting for an answer. Don't provide the answer in the question.",
     )
     
     print(f"Created Assistant! ID: {assistant.assistant_id}")

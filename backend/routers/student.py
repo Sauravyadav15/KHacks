@@ -23,7 +23,7 @@ API_KEY = os.getenv("BACKBOARD_API_KEY")
 client = BackboardClient(API_KEY)
 
 # Store assistant ID (create one once and reuse it, or store in DB)
-ASSISTANT_ID = "e1dbc4f8-3441-45ca-a3ba-b44ce9e00da1"
+ASSISTANT_ID = "6881a3e7-40cb-484e-bb99-f6e07ff0644f"
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
@@ -31,26 +31,73 @@ async def chat(request: ChatRequest):
         try:
             # 1. Create a new thread if one doesn't exist
             current_thread_id = request.thread_id
+            is_first_message = False
             if not current_thread_id:
                 print("Creating new thread...")
                 thread = await client.create_thread(ASSISTANT_ID)
                 current_thread_id = str(thread.thread_id)
+                is_first_message = True
                 # Send thread_id first
                 yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': current_thread_id})}\n\n"
 
-            # 2. Send message to Backboard with streaming
-            print(f"Sending message to thread {current_thread_id}: {request.message}")
-            stream = await client.add_message(
-                thread_id=current_thread_id,
-                content=request.message,
-                llm_provider="openai",
-                model_name="gpt-4.1-nano",
-                stream=True
-            )
+            print(f"Student message to thread {current_thread_id}: {request.message}")
 
-            # 3. Stream the response chunks
-            async for chunk in stream:
-                # Backboard returns dict chunks with 'type' and 'content' keys
+            # 2. If this is the first message, just start the story (no validation)
+            if is_first_message:
+                story_stream = await client.add_message(
+                    thread_id=current_thread_id,
+                    content=request.message,
+                    llm_provider="openai",
+                    model_name="gpt-4.1-mini",
+                    stream=True
+                )
+            else:
+                # 3. Validate student's answer with big model
+                validation_prompt = f"""You are validating a student's answer in an educational story.
+
+Student's answer: {request.message}
+
+Based on the conversation context, is this answer correct? Respond with ONLY:
+- Y (if correct)
+- N (if incorrect)"""
+
+                validation_stream = await client.add_message(
+                    thread_id=current_thread_id,
+                    content=validation_prompt,
+                    llm_provider="openai",
+                    model_name="gpt-4o",  # Big model validates
+                    stream=True
+                )
+
+                # Collect validation result
+                validation_response = []
+                async for chunk in validation_stream:
+                    if chunk.get('type') == 'content_streaming' and chunk.get('content'):
+                        validation_response.append(chunk['content'])
+                    elif chunk.get('type') == 'message_complete':
+                        break
+
+                validation_result = ''.join(validation_response).strip().upper()
+                print(f"Validation result: {validation_result}")
+
+                # 4. Small model continues based on validation
+                if 'Y' in validation_result:
+                    # Answer is correct - continue the story
+                    continuation_prompt = "The student's answer is correct. Continue the story and ask the next question."
+                else:
+                    # Answer is incorrect - give feedback and re-ask
+                    continuation_prompt = "The student's answer needs improvement. Provide a hint or explanation and ask the question again."
+
+                # 5. Stream small model's response
+                story_stream = await client.add_message(
+                    thread_id=current_thread_id,
+                    content=continuation_prompt,
+                    llm_provider="openai",
+                    model_name="gpt-4.1-nano",  # Small model continues story
+                    stream=True
+                )
+
+            async for chunk in story_stream:
                 if chunk.get('type') == 'content_streaming' and chunk.get('content'):
                     yield f"data: {json.dumps({'type': 'content', 'content': chunk['content'], 'thread_id': str(current_thread_id)})}\n\n"
                 elif chunk.get('type') == 'message_complete':
