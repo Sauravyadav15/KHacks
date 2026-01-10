@@ -19,7 +19,7 @@ async def createAssistant():
         thread_id=thread.thread_id,
         content="Hello! Tell me a fun fact about space.",
         llm_provider="openai",
-        model_name="gpt-4o",
+        model_name="gpt-4.1-mini",
         stream=False
     )
 
