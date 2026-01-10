@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 
 interface Message {
   role: 'user' | 'bot';
@@ -9,35 +8,93 @@ interface Message {
 const Student: React.FC = () => {
   const [chatLog, setChatLog] = useState<Message[]>([]);
   const [message, setMessage] = useState('');
-  // Add state to store the current thread ID
   const [threadId, setThreadId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   const sendMessage = async () => {
-    if (!message) return;
+    if (!message || isLoading) return;
 
-    // Optimistic UI update
-    const newLog: Message[] = [...chatLog, { role: 'user', content: message }];
+    const userMessage = message;
+    // Optimistic UI update - add user message
+    const newLog: Message[] = [...chatLog, { role: 'user', content: userMessage }];
     setChatLog(newLog);
     setMessage('');
+    setIsLoading(true);
+
+    // Add placeholder for bot response
+    const botMessageIndex = newLog.length;
+    setChatLog([...newLog, { role: 'bot', content: '' }]);
 
     try {
-      // Send message AND current thread_id to backend
-      const res = await axios.post('http://localhost:8000/student/chat', { 
-        message: message,
-        thread_id: threadId // Send null for first message, actual ID for others
+      const response = await fetch('http://localhost:8000/student/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: userMessage,
+          thread_id: threadId,
+        }),
       });
-      
-      // Update with bot response
-      setChatLog([...newLog, { role: 'bot', content: res.data.reply }]);
-      
-      // Save the thread ID for next time
-      if (res.data.thread_id) {
-        setThreadId(res.data.thread_id);
+
+      if (!response.ok) {
+        throw new Error('Network response was not ok');
       }
-      
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedContent = '';
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.type === 'thread_id') {
+                setThreadId(data.thread_id);
+              } else if (data.type === 'content') {
+                accumulatedContent += data.content;
+                // Update the bot message in real-time
+                setChatLog(prevLog => {
+                  const updatedLog = [...prevLog];
+                  updatedLog[botMessageIndex] = { role: 'bot', content: accumulatedContent };
+                  return updatedLog;
+                });
+                if (data.thread_id) {
+                  setThreadId(data.thread_id);
+                }
+              } else if (data.type === 'done') {
+                if (data.thread_id) {
+                  setThreadId(data.thread_id);
+                }
+              } else if (data.type === 'error') {
+                console.error('Error from server:', data.error);
+                setChatLog(prevLog => {
+                  const updatedLog = [...prevLog];
+                  updatedLog[botMessageIndex] = { role: 'bot', content: `Error: ${data.error}` };
+                  return updatedLog;
+                });
+              }
+            }
+          }
+        }
+      }
     } catch (err) {
-      console.error("Chat failed", err);
-      // Optional: Add error message to chat log
+      console.error('Chat failed', err);
+      setChatLog(prevLog => {
+        const updatedLog = [...prevLog];
+        updatedLog[botMessageIndex] = { role: 'bot', content: 'Error: Failed to get response' };
+        return updatedLog;
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -65,12 +122,17 @@ const Student: React.FC = () => {
               type="text"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+              onKeyDown={(e) => e.key === 'Enter' && !isLoading && sendMessage()}
               placeholder="Say something..."
               className="input input-bordered flex-1"
+              disabled={isLoading}
             />
-            <button onClick={sendMessage} className="btn btn-primary">
-              Send
+            <button
+              onClick={sendMessage}
+              className="btn btn-primary"
+              disabled={isLoading || !message}
+            >
+              {isLoading ? 'Sending...' : 'Send'}
             </button>
           </div>
         </div>

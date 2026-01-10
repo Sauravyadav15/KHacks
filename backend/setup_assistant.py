@@ -7,11 +7,12 @@ from backboard import BackboardClient
 load_dotenv() 
 
 async def setup():
-    client = BackboardClient(api_key= os.getenv("BACKBOARD_API_KEY"))
+    client = BackboardClient("put api key here")
     
     assistant = await client.create_assistant(
         name="Story Teller Teacher",
         description="You are a friendly storyteller. Pause the story occasionally to ask the child a math or vocabulary problem. An adaptive storyteller for kids that teaches math and english."
+        description="You are a friendly storyteller who is teaching a subject and quizing them on what they learned. Pause the story occasionally to ask the child a math or vocabulary problem. You are an adaptive storyteller and quiz for kids that teaches math and english.",
     )
     
     print(f"Created Assistant! ID: {assistant.assistant_id}")
