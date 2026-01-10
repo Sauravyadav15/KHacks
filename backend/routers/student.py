@@ -1,5 +1,6 @@
 # student.py
 import os
+import json
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -13,7 +14,6 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     message: str
 
-#LOAD .env file
 # Initialize Backboard Client
 API_KEY = os.getenv("BACKBOARD_API_KEY", "Add key here")
 client = BackboardClient(api_key="here")
