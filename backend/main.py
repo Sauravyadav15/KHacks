@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from routers import student
+from routers import student, teacher
 import sqlite3
 
 app = FastAPI()
@@ -14,8 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include the student router
+# Include routers
 app.include_router(student.router)
+app.include_router(teacher.router)
 
 class MessageInput(BaseModel):
     text: str

@@ -3,6 +3,7 @@ import axios from 'axios';
 
 const Teacher: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   const handleFileUpload = async () => {
     if (!file) return;
@@ -11,15 +12,23 @@ const Teacher: React.FC = () => {
     formData.append("file", file);
 
     try {
-      await axios.post('http://localhost:8000/upload', formData, {
+      setUploading(true);
+      const response = await axios.post('http://localhost:8000/teacher/upload', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
-      alert('File uploaded successfully!');
-    } catch (err) {
+      alert(`File uploaded successfully: ${response.data.filename}`);
+      setFile(null);
+      // Reset the file input
+      const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
+    } catch (err: any) {
       console.error("Upload failed", err);
-      alert('Upload failed');
+      const errorMsg = err.response?.data?.detail || err.message || 'Upload failed';
+      alert(`Upload failed: ${errorMsg}`);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -43,10 +52,17 @@ const Teacher: React.FC = () => {
           <div className="card-actions justify-end mt-4">
             <button
               onClick={handleFileUpload}
-              disabled={!file}
+              disabled={!file || uploading}
               className="btn btn-primary"
             >
-              Upload to Backboard
+              {uploading ? (
+                <>
+                  <span className="loading loading-spinner"></span>
+                  Uploading...
+                </>
+              ) : (
+                'Upload to Backboard'
+              )}
             </button>
           </div>
         </div>
