@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multiple File Test</title>
+</head>
+<body>
+    <h1>Multiple File Upload Test</h1>
+    <input type="file" multiple id="fileInput" />
+    <div id="output"></div>
+
+    <script>
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = e.target.files;
+            document.getElementById('output').innerHTML = `Selected ${files.length} file(s):<br>`;
+            for (let i = 0; i < files.length; i++) {
+                document.getElementById('output').innerHTML += `- ${files[i].name}<br>`;
+            }
+        });
+    </script>
+</body>
+</html>
