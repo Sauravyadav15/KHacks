@@ -2,6 +2,7 @@
 import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from dotenv import load_dotenv # Add this
 from backboard import BackboardClient
 
 # Initialize router
@@ -12,13 +13,16 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     message: str
 
+#LOAD .env file
+load_dotenv() 
+
 # Initialize Backboard Client
 # BEST PRACTICE: Use environment variable for API Key
-API_KEY = os.getenv("BACKBOARD_API_KEY", "put api key here")
+API_KEY = os.getenv("BACKBOARD_API_KEY")
 client = BackboardClient(api_key=API_KEY)
 
 # Store assistant ID (create one once and reuse it, or store in DB)
-ASSISTANT_ID = "put assistant id here" 
+ASSISTANT_ID = "d3316e83-1167-4446-b102-3f28f0aca40b" 
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
