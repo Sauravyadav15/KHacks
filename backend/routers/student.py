@@ -4,6 +4,7 @@ import json
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from dotenv import load_dotenv
 from backboard import BackboardClient
 
 # Initialize router
@@ -14,12 +15,15 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     message: str
 
+#Load .env file
+load_dotenv() 
+
 # Initialize Backboard Client
-API_KEY = os.getenv("BACKBOARD_API_KEY", "Add key here")
-client = BackboardClient(api_key="here")
+API_KEY = os.getenv("BACKBOARD_API_KEY")
+client = BackboardClient(API_KEY)
 
 # Store assistant ID (create one once and reuse it, or store in DB)
-ASSISTANT_ID = "877cd681-6c8f-41df-af98-6d8e81459cb1"
+ASSISTANT_ID = "e1dbc4f8-3441-45ca-a3ba-b44ce9e00da1"
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
@@ -40,7 +44,7 @@ async def chat(request: ChatRequest):
                 thread_id=current_thread_id,
                 content=request.message,
                 llm_provider="openai",
-                model_name="gpt-4.1-mini",
+                model_name="gpt-4.1-nano",
                 stream=True
             )
 
