@@ -9,19 +9,35 @@ interface Message {
 const Student: React.FC = () => {
   const [chatLog, setChatLog] = useState<Message[]>([]);
   const [message, setMessage] = useState('');
+  // Add state to store the current thread ID
+  const [threadId, setThreadId] = useState<string | null>(null);
 
   const sendMessage = async () => {
     if (!message) return;
 
+    // Optimistic UI update
     const newLog: Message[] = [...chatLog, { role: 'user', content: message }];
     setChatLog(newLog);
     setMessage('');
 
     try {
-      const res = await axios.post('http://localhost:8000/student/chat', { message: message });
+      // Send message AND current thread_id to backend
+      const res = await axios.post('http://localhost:8000/student/chat', { 
+        message: message,
+        thread_id: threadId // Send null for first message, actual ID for others
+      });
+      
+      // Update with bot response
       setChatLog([...newLog, { role: 'bot', content: res.data.reply }]);
+      
+      // Save the thread ID for next time
+      if (res.data.thread_id) {
+        setThreadId(res.data.thread_id);
+      }
+      
     } catch (err) {
       console.error("Chat failed", err);
+      // Optional: Add error message to chat log
     }
   };
 

@@ -3,11 +3,11 @@ import asyncio
 from backboard import BackboardClient
 
 async def setup():
-    client = BackboardClient("espr_Y49tajp6peEh9Salhr7h_bY4RMwGlbF9Nq9VMpesylA")
+    client = BackboardClient("put api key here")
     
     assistant = await client.create_assistant(
         name="Story Teller Teacher",
-        description="An adaptive storyteller for kids that teaches math and english.",
+        description="You are a friendly storyteller. Pause the story occasionally to ask the child a math or vocabulary problem. An adaptive storyteller for kids that teaches math and english.",
     )
     
     print(f"Created Assistant! ID: {assistant.assistant_id}")
