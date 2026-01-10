@@ -26,3 +26,6 @@ dist-ssr
 *.env
 *.venv
 *.db
+
+# Backend uploads
+backend/uploads/
