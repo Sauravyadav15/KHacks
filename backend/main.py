@@ -87,27 +87,3 @@ async def get_chat_history():
         return [{"role": row["role"], "content": row["content"]} for row in rows]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/chat")
-async def save_chat(message: MessageInput):
-    try:
-        conn = sqlite3.connect('chat_history.db')
-        c = conn.cursor()
-        
-        # 1. Save User Message
-        c.execute("INSERT INTO messages (role, content) VALUES (?, ?)", 
-                  ('user', message.text))
-        
-        # 2. Generate Bot Reply (Mock logic for now)
-        bot_reply = f"Story continues: You said '{message.text}'..."
-        
-        # 3. Save Bot Message
-        c.execute("INSERT INTO messages (role, content) VALUES (?, ?)", 
-                  ('bot', bot_reply))
-        
-        conn.commit()
-        conn.close()
-
-        return {"reply": bot_reply}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
