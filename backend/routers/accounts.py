@@ -120,7 +120,7 @@ def authenticate_user(username: str, password: str):
     
     return user
 
-def create_access_token(data: dict, expires_delta: timedelta or None = None):
+def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now() + expires_delta
