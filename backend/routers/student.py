@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from backboard import BackboardClient
+from pathlib import Path
 
 # Initialize router
 router = APIRouter(prefix="/student", tags=["Student"])
@@ -37,6 +38,23 @@ async def chat(request: ChatRequest):
                 thread = await client.create_thread(ASSISTANT_ID)
                 current_thread_id = str(thread.thread_id)
                 is_first_message = True
+
+                # Upload active files to the thread for context
+                from routers.teacher import get_active_file_paths
+                active_files = get_active_file_paths()
+
+                if active_files:
+                    print(f"Uploading {len(active_files)} active files to thread {current_thread_id}...")
+                    for file_path in active_files:
+                        try:
+                            await client.upload_document_to_thread(
+                                thread_id=current_thread_id,
+                                file_path=file_path
+                            )
+                            print(f"✓ Uploaded {Path(file_path).name} to thread")
+                        except Exception as e:
+                            print(f"✗ Error uploading {file_path}: {e}")
+
                 # Send thread_id first
                 yield f"data: {json.dumps({'type': 'thread_id', 'thread_id': current_thread_id})}\n\n"
 
@@ -44,14 +62,30 @@ async def chat(request: ChatRequest):
 
             # 2. If this is the first message, just start the story (no validation)
             if is_first_message:
+                # Get custom teacher instructions
+                from routers.teacher import get_active_instructions
+                teacher_instructions = get_active_instructions()
+
+                # Add instruction to use uploaded materials
+                initial_prompt = request.message
+                if active_files:
+                    initial_prompt = f"{request.message}\n\nIMPORTANT: Use the uploaded lesson materials to create problems that match those examples and difficulty levels. Base your questions on the content provided in the documents."
+
+                # Append teacher instructions
+                initial_prompt += teacher_instructions
+
                 story_stream = await client.add_message(
                     thread_id=current_thread_id,
-                    content=request.message,
+                    content=initial_prompt,
                     llm_provider="openai",
                     model_name="gpt-4.1-mini",
                     stream=True
                 )
             else:
+                # Get custom teacher instructions for continuation
+                from routers.teacher import get_active_instructions
+                teacher_instructions = get_active_instructions()
+
                 # 3. Validate student's answer with big model
                 validation_prompt = f"""You are validating a student's answer in an educational story.
 
@@ -59,7 +93,7 @@ Student's answer: {request.message}
 
 Based on the conversation context, is this answer correct? Respond with ONLY:
 - Y (if correct)
-- N (if incorrect)"""
+- N (if incorrect){teacher_instructions}"""
 
                 validation_stream = await client.add_message(
                     thread_id=current_thread_id,
@@ -83,10 +117,10 @@ Based on the conversation context, is this answer correct? Respond with ONLY:
                 # 4. Small model continues based on validation
                 if 'Y' in validation_result:
                     # Answer is correct - continue the story
-                    continuation_prompt = "The student's answer is correct. Continue the story and ask the next question."
+                    continuation_prompt = f"The student's answer is correct. Continue the story and ask the next question.{teacher_instructions}"
                 else:
                     # Answer is incorrect - give feedback and re-ask
-                    continuation_prompt = "The student's answer needs improvement. Provide a hint or explanation and ask the question again."
+                    continuation_prompt = f"The student's answer needs improvement. Provide a hint or explanation and ask the question again.{teacher_instructions}"
 
                 # 5. Stream small model's response
                 story_stream = await client.add_message(

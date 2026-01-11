@@ -19,6 +19,14 @@ interface FileItem {
   category_name: string | null;
 }
 
+interface Instruction {
+  id: number;
+  instruction_name: string;
+  instruction_value: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 const Teacher: React.FC = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -27,10 +35,21 @@ const Teacher: React.FC = () => {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Configuration tab state
+  const [activeTab, setActiveTab] = useState<'files' | 'config'>('files');
+  const [instructions, setInstructions] = useState<Instruction[]>([]);
+  const [newInstruction, setNewInstruction] = useState({ name: '', value: '' });
+
   useEffect(() => {
     fetchCategories();
     fetchFiles();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'config') {
+      fetchInstructions();
+    }
+  }, [activeTab]);
 
   const fetchCategories = async () => {
     try {
@@ -47,6 +66,56 @@ const Teacher: React.FC = () => {
       setFiles(response.data.files);
     } catch (err) {
       console.error("Failed to fetch files", err);
+    }
+  };
+
+  const fetchInstructions = async () => {
+    try {
+      const response = await axios.get('http://localhost:8000/teacher/config/instructions');
+      setInstructions(response.data.instructions);
+    } catch (err) {
+      console.error("Failed to fetch instructions", err);
+    }
+  };
+
+  const handleAddInstruction = async () => {
+    if (!newInstruction.name.trim() || !newInstruction.value.trim()) {
+      alert('Please provide both name and instruction text');
+      return;
+    }
+
+    try {
+      await axios.post('http://localhost:8000/teacher/config/instructions', {
+        name: newInstruction.name,
+        value: newInstruction.value
+      });
+      setNewInstruction({ name: '', value: '' });
+      await fetchInstructions();
+    } catch (err: any) {
+      console.error("Failed to add instruction", err);
+      alert(`Failed to add instruction: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleToggleInstruction = async (instructionId: number) => {
+    try {
+      await axios.post(`http://localhost:8000/teacher/config/instructions/${instructionId}/toggle`);
+      await fetchInstructions();
+    } catch (err: any) {
+      console.error("Failed to toggle instruction", err);
+      alert(`Failed to toggle instruction: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleDeleteInstruction = async (instructionId: number) => {
+    if (!confirm('Are you sure you want to delete this instruction?')) return;
+
+    try {
+      await axios.delete(`http://localhost:8000/teacher/config/instructions/${instructionId}`);
+      await fetchInstructions();
+    } catch (err: any) {
+      console.error("Failed to delete instruction", err);
+      alert(`Failed to delete instruction: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -167,8 +236,27 @@ const Teacher: React.FC = () => {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      {/* Upload Section */}
-      <div className="card bg-base-100 shadow-xl">
+      {/* Tab Navigation */}
+      <div className="tabs tabs-boxed bg-base-100 shadow-xl p-2">
+        <a
+          className={`tab tab-lg ${activeTab === 'files' ? 'tab-active' : ''}`}
+          onClick={() => setActiveTab('files')}
+        >
+          Files & Categories
+        </a>
+        <a
+          className={`tab tab-lg ${activeTab === 'config' ? 'tab-active' : ''}`}
+          onClick={() => setActiveTab('config')}
+        >
+          Configuration
+        </a>
+      </div>
+
+      {/* Files Tab Content */}
+      {activeTab === 'files' && (
+        <>
+          {/* Upload Section */}
+          <div className="card bg-base-100 shadow-xl">
         <div className="card-body">
           <h2 className="card-title text-2xl mb-4">Upload Lessons</h2>
 
@@ -394,6 +482,99 @@ const Teacher: React.FC = () => {
           ))}
         </div>
       </div>
+        </>
+      )}
+
+      {/* Configuration Tab Content */}
+      {activeTab === 'config' && (
+        <>
+          <div className="card bg-base-100 shadow-xl">
+            <div className="card-body">
+              <h2 className="card-title text-2xl mb-4">Custom Instructions</h2>
+              <p className="text-sm text-gray-600 mb-4">
+                Add custom rules and instructions that will guide the AI when teaching students.
+                These instructions will be included in every conversation.
+              </p>
+
+              {/* Add Instruction Form */}
+              <div className="card bg-base-200 p-4 mb-6">
+                <h3 className="font-semibold mb-3">Add New Instruction</h3>
+                <input
+                  type="text"
+                  placeholder="Instruction Name (e.g., 'Focus on Multiplication')"
+                  className="input input-bordered mb-3 w-full"
+                  value={newInstruction.name}
+                  onChange={(e) => setNewInstruction({ ...newInstruction, name: e.target.value })}
+                />
+                <textarea
+                  placeholder="Instruction text (e.g., 'Only ask multiplication questions between 1-12')"
+                  className="textarea textarea-bordered mb-3 w-full h-24"
+                  value={newInstruction.value}
+                  onChange={(e) => setNewInstruction({ ...newInstruction, value: e.target.value })}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleAddInstruction}
+                  disabled={!newInstruction.name.trim() || !newInstruction.value.trim()}
+                >
+                  Add Instruction
+                </button>
+              </div>
+
+              {/* Instructions List */}
+              <div className="space-y-3">
+                <h3 className="font-semibold text-lg">Active Instructions</h3>
+                {instructions.length > 0 ? (
+                  instructions.map((inst) => (
+                    <div key={inst.id} className="card bg-base-200 shadow">
+                      <div className="card-body p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <h4 className="font-bold text-lg">{inst.instruction_name}</h4>
+                            <p className="text-sm mt-2 whitespace-pre-wrap">{inst.instruction_value}</p>
+                            <p className="text-xs text-gray-500 mt-2">
+                              Created: {new Date(inst.created_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              className={`btn btn-sm ${inst.is_active ? 'btn-success' : 'btn-outline'}`}
+                              onClick={() => handleToggleInstruction(inst.id)}
+                            >
+                              {inst.is_active ? 'Active' : 'Inactive'}
+                            </button>
+                            <button
+                              className="btn btn-sm btn-error"
+                              onClick={() => handleDeleteInstruction(inst.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-gray-500 italic">No instructions yet. Add one above to customize the AI's behavior!</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Info Card */}
+          <div className="card bg-info text-info-content shadow-xl">
+            <div className="card-body">
+              <h3 className="card-title">How Custom Instructions Work</h3>
+              <ul className="list-disc list-inside space-y-1">
+                <li>Instructions are automatically included in every student conversation</li>
+                <li>Active files and instructions work together to guide the AI</li>
+                <li>Toggle instructions on/off to test different teaching approaches</li>
+                <li>Changes apply to new conversations immediately</li>
+              </ul>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
