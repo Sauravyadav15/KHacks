@@ -23,7 +23,7 @@ API_KEY = os.getenv("BACKBOARD_API_KEY")
 client = BackboardClient(API_KEY)
 
 # Store assistant ID (create one once and reuse it, or store in DB)
-ASSISTANT_ID = "6881a3e7-40cb-484e-bb99-f6e07ff0644f"
+ASSISTANT_ID = "b933d472-e5ab-46de-9b0f-6bb8271ad09a"
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
