@@ -13,6 +13,10 @@ class CategoryCreate(BaseModel):
 class FileCategoryUpdate(BaseModel):
     category_id: int | None
 
+class InstructionCreate(BaseModel):
+    name: str
+    value: str
+
 # Create uploads directory relative to backend folder
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -327,5 +331,148 @@ async def get_active_files():
 
         files = [dict(row) for row in rows]
         return {"files": files, "count": len(files)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Helper functions for student.py
+def get_active_file_paths() -> list[str]:
+    """
+    Get list of file paths for all active files.
+    This is used by student.py to upload files to new threads.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("""
+            SELECT file_path
+            FROM files
+            WHERE is_active = 1
+            ORDER BY uploaded_at ASC
+        """)
+        rows = c.fetchall()
+        conn.close()
+        return [row['file_path'] for row in rows]
+    except Exception as e:
+        print(f"Error getting active file paths: {e}")
+        return []
+
+def get_active_instructions() -> str:
+    """
+    Get all active custom instructions formatted for prompt injection.
+    This is used by student.py to add teacher rules to AI prompts.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("""
+            SELECT instruction_value
+            FROM assistant_config
+            WHERE is_active = 1
+            ORDER BY created_at ASC
+        """)
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            return ""
+
+        instruction_text = "\n".join([f"- {row['instruction_value']}" for row in rows])
+        return f"\n\nADDITIONAL TEACHER INSTRUCTIONS:\n{instruction_text}"
+    except Exception as e:
+        print(f"Error getting active instructions: {e}")
+        return ""
+
+# ===== CONFIGURATION ENDPOINTS =====
+
+@router.get("/config/instructions")
+async def get_instructions():
+    """
+    Get all custom instructions for the assistant.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, instruction_name, instruction_value, is_active, created_at
+            FROM assistant_config
+            ORDER BY created_at DESC
+        """)
+        rows = c.fetchall()
+        conn.close()
+        instructions = [dict(row) for row in rows]
+        return {"instructions": instructions, "count": len(instructions)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/config/instructions")
+async def create_instruction(instruction: InstructionCreate):
+    """
+    Create a new custom instruction.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO assistant_config (instruction_name, instruction_value)
+            VALUES (?, ?)
+        """, (instruction.name, instruction.value))
+        instruction_id = c.lastrowid
+        conn.commit()
+        conn.close()
+        return {
+            "message": "Instruction created successfully",
+            "id": instruction_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/config/instructions/{instruction_id}/toggle")
+async def toggle_instruction(instruction_id: int):
+    """
+    Toggle an instruction's active status.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        c = conn.cursor()
+        c.execute("""
+            UPDATE assistant_config
+            SET is_active = NOT is_active
+            WHERE id = ?
+        """, (instruction_id,))
+
+        if c.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Instruction not found")
+
+        conn.commit()
+        conn.close()
+        return {"message": "Instruction toggled successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/config/instructions/{instruction_id}")
+async def delete_instruction(instruction_id: int):
+    """
+    Delete a custom instruction.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        c = conn.cursor()
+        c.execute("DELETE FROM assistant_config WHERE id = ?", (instruction_id,))
+
+        if c.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Instruction not found")
+
+        conn.commit()
+        conn.close()
+        return {"message": "Instruction deleted successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
