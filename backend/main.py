@@ -50,6 +50,8 @@ def init_db():
                   category_id INTEGER,
                   uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   is_active BOOLEAN DEFAULT 0,
+                  backboard_doc_id TEXT,
+                  backboard_status TEXT DEFAULT 'not_uploaded',
                   FOREIGN KEY (category_id) REFERENCES categories(id))''')
 
     # Sessions table

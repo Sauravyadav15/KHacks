@@ -17,6 +17,8 @@ interface FileItem {
   is_active: boolean;
   category_id: number | null;
   category_name: string | null;
+  backboard_doc_id: string | null;
+  backboard_status: string | null;
 }
 
 interface Instruction {
@@ -278,6 +280,27 @@ const Teacher: React.FC = () => {
     }
   };
 
+  // Helper to render Backboard status badge
+  const renderBackboardStatus = (status: string | null) => {
+    if (!status || status === 'not_uploaded') {
+      return <span className="badge badge-ghost badge-sm">Not in AI</span>;
+    }
+    switch (status) {
+      case 'pending':
+        return <span className="badge badge-warning badge-sm">Pending</span>;
+      case 'processing':
+        return <span className="badge badge-info badge-sm">Processing</span>;
+      case 'indexed':
+        return <span className="badge badge-success badge-sm">Ready for AI</span>;
+      case 'error':
+      case 'upload_failed':
+      case 'upload_error':
+        return <span className="badge badge-error badge-sm">Error</span>;
+      default:
+        return <span className="badge badge-ghost badge-sm">{status}</span>;
+    }
+  };
+
   const handleDeleteCategory = async (categoryId: number) => {
     if (!confirm('Are you sure you want to delete this category? Files in this category will become uncategorized.')) return;
 
@@ -505,7 +528,10 @@ const Teacher: React.FC = () => {
                   <div className="card-body p-4">
                     <div className="flex items-center justify-between">
                       <div className="flex-1">
-                        <p className="font-semibold">{file.original_filename}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold">{file.original_filename}</p>
+                          {renderBackboardStatus(file.backboard_status)}
+                        </div>
                         <p className="text-sm text-gray-500">
                           {(file.file_size / 1024).toFixed(2)} KB • {new Date(file.uploaded_at).toLocaleDateString()}
                         </p>
@@ -554,7 +580,10 @@ const Teacher: React.FC = () => {
                     <div className="card-body p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
-                          <p className="font-semibold">{file.original_filename}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-semibold">{file.original_filename}</p>
+                            {renderBackboardStatus(file.backboard_status)}
+                          </div>
                           <p className="text-sm text-gray-500">
                             {(file.file_size / 1024).toFixed(2)} KB • {new Date(file.uploaded_at).toLocaleDateString()}
                           </p>

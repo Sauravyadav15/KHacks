@@ -5,8 +5,18 @@ from datetime import datetime
 import sqlite3
 from pydantic import BaseModel
 from .accounts import get_current_user, User, DB_PATH as ACCOUNTS_DB_PATH
+import httpx
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 router = APIRouter(prefix="/teacher", tags=["Teacher"])
+
+# Backboard API configuration
+BACKBOARD_API_KEY = os.getenv("BACKBOARD_API_KEY")
+BACKBOARD_BASE_URL = "https://app.backboard.io/api"
+ASSISTANT_ID = "610acc47-b81b-4234-bda9-8a8a102ebca1"  # Same as in student.py
 
 class CategoryCreate(BaseModel):
     name: str
@@ -26,7 +36,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 async def upload_files(files: list[UploadFile] = File(...)):
     """
     Upload one or more lesson files.
-    Saves the files to the uploads directory with timestamps and records in database.
+    Saves files locally AND uploads to Backboard assistant for RAG.
     """
     try:
         uploaded_files = []
@@ -35,20 +45,48 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
         for file in files:
             # Create a unique filename with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # Added microseconds for uniqueness
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             safe_filename = f"{timestamp}_{file.filename}"
             file_path = UPLOAD_DIR / safe_filename
 
-            # Save the file
+            # Read file content for Backboard upload
+            file_content = await file.read()
+
+            # Save locally
             with file_path.open("wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+                buffer.write(file_content)
 
             file_size = file_path.stat().st_size
 
-            # Save to database
+            # Upload to Backboard assistant for RAG
+            backboard_doc_id = None
+            backboard_status = "not_uploaded"
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{BACKBOARD_BASE_URL}/assistants/{ASSISTANT_ID}/documents",
+                        headers={"X-API-Key": BACKBOARD_API_KEY},
+                        files={"file": (file.filename, file_content)},
+                        timeout=60.0
+                    )
+                    if response.status_code == 200:
+                        doc_data = response.json()
+                        backboard_doc_id = doc_data.get("document_id")
+                        backboard_status = doc_data.get("status", "pending")
+                        print(f"Uploaded to Backboard: {backboard_doc_id} - {backboard_status}")
+                    else:
+                        print(f"Backboard upload failed: {response.status_code} - {response.text}")
+                        backboard_status = "upload_failed"
+            except Exception as e:
+                print(f"Backboard upload error: {e}")
+                backboard_status = "upload_error"
+
+            # Save to database with Backboard document ID
             c.execute(
-                "INSERT INTO files (filename, original_filename, file_path, file_size) VALUES (?, ?, ?, ?)",
-                (safe_filename, file.filename, str(file_path), file_size)
+                """INSERT INTO files
+                   (filename, original_filename, file_path, file_size, backboard_doc_id, backboard_status)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (safe_filename, file.filename, str(file_path), file_size, backboard_doc_id, backboard_status)
             )
             file_id = c.lastrowid
 
@@ -57,7 +95,9 @@ async def upload_files(files: list[UploadFile] = File(...)):
                 "filename": safe_filename,
                 "original_filename": file.filename,
                 "size": file_size,
-                "path": str(file_path)
+                "path": str(file_path),
+                "backboard_doc_id": backboard_doc_id,
+                "backboard_status": backboard_status
             })
 
         conn.commit()
@@ -74,7 +114,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
 @router.get("/files")
 async def list_files():
     """
-    List all uploaded files with category information.
+    List all uploaded files with category and Backboard status information.
     """
     try:
         conn = sqlite3.connect('chat_history.db')
@@ -82,7 +122,8 @@ async def list_files():
         c = conn.cursor()
         c.execute("""
             SELECT f.id, f.filename, f.original_filename, f.file_size,
-                   f.uploaded_at, f.is_active, f.category_id, c.name as category_name
+                   f.uploaded_at, f.is_active, f.category_id, c.name as category_name,
+                   f.backboard_doc_id, f.backboard_status
             FROM files f
             LEFT JOIN categories c ON f.category_id = c.id
             ORDER BY f.uploaded_at DESC
@@ -92,6 +133,95 @@ async def list_files():
 
         files = [dict(row) for row in rows]
         return {"files": files, "count": len(files)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/files/{file_id}/backboard-status")
+async def get_backboard_status(file_id: int):
+    """
+    Get the current Backboard processing status for a file.
+    Fetches fresh status from Backboard API.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT backboard_doc_id, backboard_status FROM files WHERE id = ?", (file_id,))
+        row = c.fetchone()
+
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="File not found")
+
+        backboard_doc_id = row['backboard_doc_id']
+        if not backboard_doc_id:
+            conn.close()
+            return {"status": "not_uploaded", "message": "File not uploaded to Backboard"}
+
+        # Fetch fresh status from Backboard
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{BACKBOARD_BASE_URL}/documents/{backboard_doc_id}/status",
+                headers={"X-API-Key": BACKBOARD_API_KEY},
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                status_data = response.json()
+                new_status = status_data.get("status", "unknown")
+
+                # Update local database
+                c.execute(
+                    "UPDATE files SET backboard_status = ? WHERE id = ?",
+                    (new_status, file_id)
+                )
+                conn.commit()
+                conn.close()
+
+                return {
+                    "file_id": file_id,
+                    "backboard_doc_id": backboard_doc_id,
+                    "status": new_status,
+                    "details": status_data
+                }
+            else:
+                conn.close()
+                return {
+                    "file_id": file_id,
+                    "backboard_doc_id": backboard_doc_id,
+                    "status": "error",
+                    "message": f"Failed to fetch status: {response.status_code}"
+                }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/backboard/documents")
+async def list_backboard_documents():
+    """
+    List all documents attached to the Backboard assistant.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{BACKBOARD_BASE_URL}/assistants/{ASSISTANT_ID}/documents",
+                headers={"X-API-Key": BACKBOARD_API_KEY},
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                documents = response.json()
+                return {"documents": documents, "count": len(documents)}
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to fetch documents: {response.text}"
+                )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
