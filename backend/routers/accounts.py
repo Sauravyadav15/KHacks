@@ -36,10 +36,16 @@ def init_db():
             hashed_password TEXT NOT NULL,
             account_active INTEGER NOT NULL DEFAULT 1,
             account_type TEXT NOT NULL DEFAULT 'student',
-            assistant_id TEXT NOT NULL
+            assistant_id TEXT NOT NULL DEFAULT ''
         );
         """
     )
+
+    # Migration: Add assistant_id column if it doesn't exist
+    c.execute("PRAGMA table_info(accounts)")
+    columns = [col[1] for col in c.fetchall()]
+    if 'assistant_id' not in columns:
+        c.execute("ALTER TABLE accounts ADD COLUMN assistant_id TEXT NOT NULL DEFAULT ''")
 
     conn.commit()
     conn.close()
@@ -209,6 +215,17 @@ async def register_user(user: UserCreate):
     conn.commit()
     conn.close()
     return {"message": "User created successfully"}
+
+@router.get("/me")
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """Get current logged-in user's information"""
+    return {
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "email": current_user.email,
+        "account_type": current_user.account_type,
+        "account_active": current_user.account_active
+    }
 
 @router.get("/students")
 async def get_all_students(current_user: User = Depends(get_current_user)):

@@ -20,6 +20,14 @@ interface DevAccount {
   account_type: 'student' | 'teacher';
 }
 
+interface CurrentUser {
+  username: string;
+  full_name: string;
+  email: string;
+  account_type: 'student' | 'teacher';
+  account_active: boolean;
+}
+
 const AuthModal = ({ 
   isOpen, 
   onClose, 
@@ -159,15 +167,42 @@ const App: React.FC = () => {
   
   const [loading, setLoading] = useState(false);
   const [devAccounts, setDevAccounts] = useState<DevAccount[]>([]);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
   // Persistent Chat State
   const [chatLog, setChatLog] = useState<any[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<number | null>(null);
 
+  const fetchCurrentUser = async () => {
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/accounts/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const userData = await response.json();
+        setCurrentUser(userData);
+      } else {
+        // Token invalid, clear it
+        localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
+        setIsLoggedIn(false);
+        setCurrentUser(null);
+      }
+    } catch (error) {
+      console.error('Failed to fetch current user:', error);
+    }
+  };
+
   useEffect(() => {
     fetchDevAccounts();
-  }, []);
+    if (isLoggedIn) {
+      fetchCurrentUser();
+    }
+  }, [isLoggedIn]);
 
   const fetchDevAccounts = async () => {
     try {
@@ -276,7 +311,8 @@ const App: React.FC = () => {
     localStorage.removeItem('access_token');
     sessionStorage.removeItem('access_token');
     setIsLoggedIn(false);
-    
+    setCurrentUser(null);
+
     // Clear chat state
     setChatLog([]);
     setThreadId(null);
@@ -293,7 +329,19 @@ const App: React.FC = () => {
           <a className="btn btn-ghost normal-case text-xl text-primary font-bold tracking-tight gap-2">
             <span className="text-2xl">📚</span> StoryTeller AI
           </a>
-          
+
+          {/* Role Indicator Badge */}
+          {isLoggedIn && currentUser && (
+            <div
+              className={`ml-3 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-sm ${
+                currentUser.account_type === 'teacher' ? 'bg-secondary' : 'bg-primary'
+              }`}
+              title={currentUser.account_type === 'teacher' ? 'Teacher Account' : 'Student Account'}
+            >
+              {currentUser.account_type === 'teacher' ? 'T' : 'S'}
+            </div>
+          )}
+
           {/* Custom Toggle Switch */}
           <div className="join bg-base-200 p-1 rounded-full ml-6 hidden sm:flex border border-base-300">
             <button 
