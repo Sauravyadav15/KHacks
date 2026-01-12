@@ -381,7 +381,7 @@ const App: React.FC = () => {
         onRegister={handleRegister}
       />
 
-      <div className="flex-1 overflow-hidden relative bg-base-50">
+      <div className="flex-1 overflow-y-auto relative bg-base-50">
         <Outlet context={{ 
           chatLog, setChatLog, 
           threadId, setThreadId, 

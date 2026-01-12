@@ -8,6 +8,7 @@ from .accounts import get_current_user, User, DB_PATH as ACCOUNTS_DB_PATH
 import httpx
 import os
 from dotenv import load_dotenv
+from utils import convert_document_to_markdown, can_convert
 
 load_dotenv()
 
@@ -142,12 +143,13 @@ async def get_backboard_status(file_id: int):
     """
     Get the current Backboard processing status for a file.
     Fetches fresh status from Backboard API.
+    If status is 'error', automatically converts with LlamaIndex and re-uploads.
     """
     try:
         conn = sqlite3.connect('chat_history.db')
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute("SELECT backboard_doc_id, backboard_status FROM files WHERE id = ?", (file_id,))
+        c.execute("SELECT id, file_path, original_filename, backboard_doc_id, backboard_status FROM files WHERE id = ?", (file_id,))
         row = c.fetchone()
 
         if not row:
@@ -170,6 +172,58 @@ async def get_backboard_status(file_id: int):
             if response.status_code == 200:
                 status_data = response.json()
                 new_status = status_data.get("status", "unknown")
+
+                # If error, auto-retry with LlamaIndex conversion
+                # Skip if already retrying or already converted (status contains our markers)
+                current_status = row['backboard_status']
+                if new_status == "error" and can_convert(row['original_filename']) and current_status not in ('converting', 'retrying', 'conversion_failed'):
+                    print(f"Auto-retrying file {file_id} with LlamaIndex conversion...")
+
+                    # Update status immediately to prevent duplicate retries
+                    c.execute("UPDATE files SET backboard_status = 'retrying' WHERE id = ?", (file_id,))
+                    conn.commit()
+
+                    try:
+                        # Convert to markdown
+                        new_filename, md_content = convert_document_to_markdown(
+                            row['file_path'],
+                            row['original_filename']
+                        )
+
+                        # Re-upload to Backboard
+                        retry_response = await client.post(
+                            f"{BACKBOARD_BASE_URL}/assistants/{ASSISTANT_ID}/documents",
+                            headers={"X-API-Key": BACKBOARD_API_KEY},
+                            files={"file": (new_filename, md_content, "text/markdown")},
+                            timeout=60.0
+                        )
+
+                        if retry_response.status_code == 200:
+                            doc_data = retry_response.json()
+                            new_doc_id = doc_data.get("document_id")
+                            new_status = doc_data.get("status", "pending")
+
+                            c.execute(
+                                "UPDATE files SET backboard_doc_id = ?, backboard_status = ? WHERE id = ?",
+                                (new_doc_id, new_status, file_id)
+                            )
+                            conn.commit()
+                            print(f"Auto-retry successful: {new_doc_id} - {new_status}")
+
+                            conn.close()
+                            return {
+                                "file_id": file_id,
+                                "backboard_doc_id": new_doc_id,
+                                "status": new_status,
+                                "auto_converted": True,
+                                "converted_filename": new_filename
+                            }
+                        else:
+                            new_status = "conversion_failed"
+                            print(f"Auto-retry upload failed: {retry_response.text}")
+                    except Exception as e:
+                        new_status = "conversion_failed"
+                        print(f"Auto-retry conversion error: {e}")
 
                 # Update local database
                 c.execute(
@@ -220,6 +274,101 @@ async def list_backboard_documents():
                     status_code=response.status_code,
                     detail=f"Failed to fetch documents: {response.text}"
                 )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/files/{file_id}/retry-backboard")
+async def retry_backboard_upload(file_id: int):
+    """
+    Retry uploading a failed document to Backboard.
+    If the original upload failed, converts PDF to markdown and re-uploads.
+    """
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        # Get file info
+        c.execute("""
+            SELECT id, file_path, original_filename, backboard_doc_id, backboard_status
+            FROM files WHERE id = ?
+        """, (file_id,))
+        row = c.fetchone()
+
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="File not found")
+
+        file_path = row['file_path']
+        original_filename = row['original_filename']
+        old_doc_id = row['backboard_doc_id']
+
+        # Check if file can be converted
+        if not can_convert(original_filename):
+            conn.close()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot convert {original_filename} - unsupported file type"
+            )
+
+        # Convert to markdown
+        try:
+            new_filename, md_content = convert_document_to_markdown(file_path, original_filename)
+        except Exception as e:
+            conn.close()
+            raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
+
+        # Upload markdown to Backboard
+        backboard_doc_id = None
+        backboard_status = "not_uploaded"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{BACKBOARD_BASE_URL}/assistants/{ASSISTANT_ID}/documents",
+                    headers={"X-API-Key": BACKBOARD_API_KEY},
+                    files={"file": (new_filename, md_content, "text/markdown")},
+                    timeout=60.0
+                )
+                if response.status_code == 200:
+                    doc_data = response.json()
+                    backboard_doc_id = doc_data.get("document_id")
+                    backboard_status = doc_data.get("status", "pending")
+                    print(f"Retry upload to Backboard: {backboard_doc_id} - {backboard_status}")
+                else:
+                    print(f"Retry upload failed: {response.status_code} - {response.text}")
+                    conn.close()
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Backboard upload failed: {response.text}"
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            conn.close()
+            raise HTTPException(status_code=500, detail=f"Upload error: {str(e)}")
+
+        # Update database with new document ID
+        c.execute("""
+            UPDATE files
+            SET backboard_doc_id = ?, backboard_status = ?
+            WHERE id = ?
+        """, (backboard_doc_id, backboard_status, file_id))
+        conn.commit()
+        conn.close()
+
+        return {
+            "message": "Document converted and re-uploaded successfully",
+            "file_id": file_id,
+            "converted_filename": new_filename,
+            "backboard_doc_id": backboard_doc_id,
+            "backboard_status": backboard_status,
+            "old_doc_id": old_doc_id
+        }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -364,15 +513,15 @@ async def update_file_category(file_id: int, update: FileCategoryUpdate):
 @router.delete("/files/{file_id}")
 async def delete_file(file_id: int):
     """
-    Delete a file from database and filesystem.
+    Delete a file from database, filesystem, AND Backboard.
     """
     try:
         conn = sqlite3.connect('chat_history.db')
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
-        # Get file path before deleting
-        c.execute("SELECT file_path FROM files WHERE id = ?", (file_id,))
+        # Get file info before deleting
+        c.execute("SELECT file_path, backboard_doc_id FROM files WHERE id = ?", (file_id,))
         row = c.fetchone()
 
         if not row:
@@ -380,6 +529,23 @@ async def delete_file(file_id: int):
             raise HTTPException(status_code=404, detail="File not found")
 
         file_path = Path(row["file_path"])
+        backboard_doc_id = row["backboard_doc_id"]
+
+        # Delete from Backboard if it exists there
+        if backboard_doc_id:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.delete(
+                        f"{BACKBOARD_BASE_URL}/documents/{backboard_doc_id}",
+                        headers={"X-API-Key": BACKBOARD_API_KEY},
+                        timeout=30.0
+                    )
+                    if response.status_code == 200:
+                        print(f"Deleted from Backboard: {backboard_doc_id}")
+                    else:
+                        print(f"Backboard delete failed: {response.status_code} - {response.text}")
+            except Exception as e:
+                print(f"Backboard delete error: {e}")
 
         # Delete from database
         c.execute("DELETE FROM files WHERE id = ?", (file_id,))
@@ -399,21 +565,73 @@ async def delete_file(file_id: int):
 @router.post("/files/{file_id}/activate")
 async def activate_file(file_id: int):
     """
-    Mark a file as active for AI context.
+    Mark a file as active for AI context. Uploads to Backboard if not already there.
     """
     try:
         conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute("UPDATE files SET is_active = 1 WHERE id = ?", (file_id,))
 
-        if c.rowcount == 0:
+        # Get file info
+        c.execute("""
+            SELECT file_path, original_filename, backboard_doc_id
+            FROM files WHERE id = ?
+        """, (file_id,))
+        row = c.fetchone()
+
+        if not row:
             conn.close()
             raise HTTPException(status_code=404, detail="File not found")
+
+        file_path = Path(row["file_path"])
+        original_filename = row["original_filename"]
+        backboard_doc_id = row["backboard_doc_id"]
+
+        # Upload to Backboard if not already there
+        if not backboard_doc_id:
+            if not file_path.exists():
+                conn.close()
+                raise HTTPException(status_code=404, detail="File not found on disk")
+
+            # Read file content
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+
+            backboard_status = "not_uploaded"
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{BACKBOARD_BASE_URL}/assistants/{ASSISTANT_ID}/documents",
+                        headers={"X-API-Key": BACKBOARD_API_KEY},
+                        files={"file": (original_filename, file_content)},
+                        timeout=60.0
+                    )
+                    if response.status_code == 200:
+                        doc_data = response.json()
+                        backboard_doc_id = doc_data.get("document_id")
+                        backboard_status = doc_data.get("status", "pending")
+                        print(f"Uploaded to Backboard on activate: {backboard_doc_id} - {backboard_status}")
+                    else:
+                        print(f"Backboard upload failed on activate: {response.status_code} - {response.text}")
+                        backboard_status = "upload_failed"
+            except Exception as e:
+                print(f"Backboard upload error on activate: {e}")
+                backboard_status = "upload_error"
+
+            # Update with backboard info
+            c.execute("""
+                UPDATE files
+                SET is_active = 1, backboard_doc_id = ?, backboard_status = ?
+                WHERE id = ?
+            """, (backboard_doc_id, backboard_status, file_id))
+        else:
+            # Already on Backboard, just activate
+            c.execute("UPDATE files SET is_active = 1 WHERE id = ?", (file_id,))
 
         conn.commit()
         conn.close()
 
-        return {"message": "File activated successfully"}
+        return {"message": "File activated successfully", "backboard_doc_id": backboard_doc_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -422,21 +640,49 @@ async def activate_file(file_id: int):
 @router.post("/files/{file_id}/deactivate")
 async def deactivate_file(file_id: int):
     """
-    Remove a file from AI context.
+    Remove a file from AI context. Also removes from Backboard so AI can't use it.
     """
     try:
         conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
         c = conn.cursor()
-        c.execute("UPDATE files SET is_active = 0 WHERE id = ?", (file_id,))
 
-        if c.rowcount == 0:
+        # Get backboard_doc_id before updating
+        c.execute("SELECT backboard_doc_id FROM files WHERE id = ?", (file_id,))
+        row = c.fetchone()
+
+        if not row:
             conn.close()
             raise HTTPException(status_code=404, detail="File not found")
 
+        backboard_doc_id = row["backboard_doc_id"]
+
+        # Delete from Backboard if it exists there
+        if backboard_doc_id:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.delete(
+                        f"{BACKBOARD_BASE_URL}/documents/{backboard_doc_id}",
+                        headers={"X-API-Key": BACKBOARD_API_KEY},
+                        timeout=30.0
+                    )
+                    if response.status_code == 200:
+                        print(f"Removed from Backboard: {backboard_doc_id}")
+                    else:
+                        print(f"Backboard remove failed: {response.status_code} - {response.text}")
+            except Exception as e:
+                print(f"Backboard remove error: {e}")
+
+        # Update database - clear backboard info since it's no longer there
+        c.execute("""
+            UPDATE files
+            SET is_active = 0, backboard_doc_id = NULL, backboard_status = 'not_uploaded'
+            WHERE id = ?
+        """, (file_id,))
         conn.commit()
         conn.close()
 
-        return {"message": "File deactivated successfully"}
+        return {"message": "File deactivated and removed from AI"}
     except HTTPException:
         raise
     except Exception as e:

@@ -74,6 +74,7 @@ const Teacher: React.FC = () => {
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [studentsError, setStudentsError] = useState<string | null>(null);
 
+
   // Conversations state
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
@@ -86,6 +87,30 @@ const Teacher: React.FC = () => {
     fetchCategories();
     fetchFiles();
   }, []);
+
+  // Poll for status updates on pending files
+  useEffect(() => {
+    const pendingFiles = files.filter(f => f.backboard_status === 'pending' || f.backboard_status === 'processing');
+    if (pendingFiles.length === 0) return;
+
+    const pollInterval = setInterval(async () => {
+      // Refresh file status for pending files
+      for (const file of pendingFiles) {
+        try {
+          const response = await axios.get(`http://localhost:8000/teacher/files/${file.id}/backboard-status`);
+          if (response.data.status !== file.backboard_status) {
+            // Status changed, refresh all files
+            await fetchFiles();
+            break;
+          }
+        } catch (err) {
+          console.error(`Failed to check status for file ${file.id}`, err);
+        }
+      }
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [files]);
 
   useEffect(() => {
     if (activeTab === 'config') {
@@ -281,21 +306,49 @@ const Teacher: React.FC = () => {
   };
 
   // Helper to render Backboard status badge
-  const renderBackboardStatus = (status: string | null) => {
+  const renderBackboardStatus = (file: FileItem) => {
+    const status = file.backboard_status;
+
     if (!status || status === 'not_uploaded') {
       return <span className="badge badge-ghost badge-sm">Not in AI</span>;
     }
+
     switch (status) {
       case 'pending':
-        return <span className="badge badge-warning badge-sm">Pending</span>;
+        return (
+          <span className="badge badge-warning badge-sm gap-1">
+            <span className="loading loading-spinner loading-xs"></span>
+            Processing
+          </span>
+        );
       case 'processing':
-        return <span className="badge badge-info badge-sm">Processing</span>;
+        return (
+          <span className="badge badge-info badge-sm gap-1">
+            <span className="loading loading-spinner loading-xs"></span>
+            Processing
+          </span>
+        );
+      case 'converting':
+      case 'retrying':
+        return (
+          <span className="badge badge-info badge-sm gap-1">
+            <span className="loading loading-spinner loading-xs"></span>
+            Converting
+          </span>
+        );
       case 'indexed':
         return <span className="badge badge-success badge-sm">Ready for AI</span>;
       case 'error':
       case 'upload_failed':
       case 'upload_error':
-        return <span className="badge badge-error badge-sm">Error</span>;
+        return (
+          <span className="badge badge-warning badge-sm gap-1">
+            <span className="loading loading-spinner loading-xs"></span>
+            Waiting to retry
+          </span>
+        );
+      case 'conversion_failed':
+        return <span className="badge badge-error badge-sm">Failed</span>;
       default:
         return <span className="badge badge-ghost badge-sm">{status}</span>;
     }
@@ -359,6 +412,7 @@ const Teacher: React.FC = () => {
       alert(`Failed to delete file: ${err.response?.data?.detail || err.message}`);
     }
   };
+
 
   const getFilesForCategory = (categoryId: number | null) => {
     return files.filter(f => f.category_id === categoryId);
@@ -530,7 +584,7 @@ const Teacher: React.FC = () => {
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <p className="font-semibold">{file.original_filename}</p>
-                          {renderBackboardStatus(file.backboard_status)}
+                          {renderBackboardStatus(file)}
                         </div>
                         <p className="text-sm text-gray-500">
                           {(file.file_size / 1024).toFixed(2)} KB • {new Date(file.uploaded_at).toLocaleDateString()}
@@ -582,7 +636,7 @@ const Teacher: React.FC = () => {
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <p className="font-semibold">{file.original_filename}</p>
-                            {renderBackboardStatus(file.backboard_status)}
+                            {renderBackboardStatus(file)}
                           </div>
                           <p className="text-sm text-gray-500">
                             {(file.file_size / 1024).toFixed(2)} KB • {new Date(file.uploaded_at).toLocaleDateString()}
