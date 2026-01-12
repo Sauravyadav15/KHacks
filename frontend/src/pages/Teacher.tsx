@@ -28,10 +28,30 @@ interface Instruction {
 }
 
 interface Student {
+  id?: number;
   username: string;
   full_name: string;
   email: string;
   account_active: number;
+}
+
+interface Conversation {
+  id: number;
+  student_id: number;
+  student_username?: string;
+  student_name?: string;
+  thread_id: string;
+  started_at: string;
+  last_message_at: string;
+  has_wrong_answers: boolean | number;
+}
+
+interface ConversationMessage {
+  id: number;
+  role: 'user' | 'bot';
+  content: string;
+  is_wrong: boolean | number;
+  created_at: string;
 }
 
 const Teacher: React.FC = () => {
@@ -52,6 +72,14 @@ const Teacher: React.FC = () => {
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [studentsError, setStudentsError] = useState<string | null>(null);
 
+  // Conversations state
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [selectedStudentFilter, setSelectedStudentFilter] = useState<number | null>(null);
+
   useEffect(() => {
     fetchCategories();
     fetchFiles();
@@ -63,6 +91,7 @@ const Teacher: React.FC = () => {
     }
     if (activeTab === 'students') {
       fetchStudents();
+      fetchConversations();
     }
   }, [activeTab]);
 
@@ -85,6 +114,48 @@ const Teacher: React.FC = () => {
     } finally {
       setStudentsLoading(false);
     }
+  };
+
+  const fetchConversations = async () => {
+    setConversationsLoading(true);
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await axios.get('http://localhost:8000/teacher/students/conversations', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setConversations(response.data.conversations);
+    } catch (err: any) {
+      console.error("Failed to fetch conversations", err);
+    } finally {
+      setConversationsLoading(false);
+    }
+  };
+
+  const fetchConversationMessages = async (conversationId: number) => {
+    setMessagesLoading(true);
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await axios.get(`http://localhost:8000/teacher/conversations/${conversationId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setConversationMessages(response.data.messages);
+      setSelectedConversation(response.data.conversation);
+    } catch (err: any) {
+      console.error("Failed to fetch conversation messages", err);
+    } finally {
+      setMessagesLoading(false);
+    }
+  };
+
+  const getFilteredConversations = () => {
+    if (selectedStudentFilter === null) {
+      return conversations;
+    }
+    return conversations.filter(c => c.student_id === selectedStudentFilter);
   };
 
   const fetchCategories = async () => {
@@ -620,56 +691,201 @@ const Teacher: React.FC = () => {
 
       {/* Students Tab Content */}
       {activeTab === 'students' && (
-        <div className="card bg-base-100 shadow-xl">
-          <div className="card-body">
-            <h2 className="card-title text-2xl mb-4">Student List</h2>
+        <>
+          {/* Student List */}
+          <div className="card bg-base-100 shadow-xl">
+            <div className="card-body">
+              <h2 className="card-title text-2xl mb-4">Student List</h2>
 
-            {studentsLoading && (
-              <div className="flex justify-center py-8">
-                <span className="loading loading-spinner loading-lg"></span>
-              </div>
-            )}
+              {studentsLoading && (
+                <div className="flex justify-center py-8">
+                  <span className="loading loading-spinner loading-lg"></span>
+                </div>
+              )}
 
-            {studentsError && (
-              <div className="alert alert-error">
-                <span>{studentsError}</span>
-              </div>
-            )}
+              {studentsError && (
+                <div className="alert alert-error">
+                  <span>{studentsError}</span>
+                </div>
+              )}
 
-            {!studentsLoading && !studentsError && students.length === 0 && (
-              <p className="text-gray-500 italic">No students registered yet.</p>
-            )}
+              {!studentsLoading && !studentsError && students.length === 0 && (
+                <p className="text-gray-500 italic">No students registered yet.</p>
+              )}
 
-            {!studentsLoading && !studentsError && students.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="table table-zebra w-full">
-                  <thead>
-                    <tr>
-                      <th>Username</th>
-                      <th>Full Name</th>
-                      <th>Email</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {students.map((student) => (
-                      <tr key={student.username}>
-                        <td>{student.username}</td>
-                        <td>{student.full_name}</td>
-                        <td>{student.email}</td>
-                        <td>
-                          <span className={`badge ${student.account_active ? 'badge-success' : 'badge-error'}`}>
-                            {student.account_active ? 'Active' : 'Inactive'}
-                          </span>
-                        </td>
+              {!studentsLoading && !studentsError && students.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="table table-zebra w-full">
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>Full Name</th>
+                        <th>Email</th>
+                        <th>Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                    </thead>
+                    <tbody>
+                      {students.map((student) => (
+                        <tr key={student.username}>
+                          <td>{student.username}</td>
+                          <td>{student.full_name}</td>
+                          <td>{student.email}</td>
+                          <td>
+                            <span className={`badge ${student.account_active ? 'badge-success' : 'badge-error'}`}>
+                              {student.account_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+
+          {/* Conversation Viewer */}
+          <div className="card bg-base-100 shadow-xl">
+            <div className="card-body">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="card-title text-2xl">Student Conversations</h2>
+                <select
+                  className="select select-bordered"
+                  value={selectedStudentFilter ?? ''}
+                  onChange={(e) => setSelectedStudentFilter(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">All Students</option>
+                  {conversations
+                    .filter((c, i, arr) => arr.findIndex(x => x.student_id === c.student_id) === i)
+                    .map((c) => (
+                      <option key={c.student_id} value={c.student_id}>
+                        {c.student_name || c.student_username}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {conversationsLoading && (
+                <div className="flex justify-center py-8">
+                  <span className="loading loading-spinner loading-lg"></span>
+                </div>
+              )}
+
+              {!conversationsLoading && getFilteredConversations().length === 0 && (
+                <p className="text-gray-500 italic">No conversations yet.</p>
+              )}
+
+              {!conversationsLoading && getFilteredConversations().length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Conversation List */}
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {getFilteredConversations().map((conv) => (
+                      <div
+                        key={conv.id}
+                        className={`card cursor-pointer transition-all ${
+                          selectedConversation?.id === conv.id
+                            ? 'bg-primary text-primary-content'
+                            : 'bg-base-200 hover:bg-base-300'
+                        }`}
+                        onClick={() => fetchConversationMessages(conv.id)}
+                      >
+                        <div className="card-body p-3">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-semibold">{conv.student_name || conv.student_username}</p>
+                              <p className="text-xs opacity-70">
+                                {new Date(conv.started_at).toLocaleDateString()} {new Date(conv.started_at).toLocaleTimeString()}
+                              </p>
+                            </div>
+                            {conv.has_wrong_answers ? (
+                              <span className="badge badge-error badge-sm">Has Errors</span>
+                            ) : (
+                              <span className="badge badge-success badge-sm">All Correct</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Message Viewer */}
+                  <div className="bg-base-200 rounded-lg p-4 max-h-96 overflow-y-auto">
+                    {messagesLoading && (
+                      <div className="flex justify-center py-8">
+                        <span className="loading loading-spinner loading-md"></span>
+                      </div>
+                    )}
+
+                    {!messagesLoading && !selectedConversation && (
+                      <p className="text-gray-500 italic text-center py-8">
+                        Select a conversation to view messages
+                      </p>
+                    )}
+
+                    {!messagesLoading && selectedConversation && conversationMessages.length === 0 && (
+                      <p className="text-gray-500 italic text-center py-8">
+                        No messages in this conversation
+                      </p>
+                    )}
+
+                    {!messagesLoading && selectedConversation && conversationMessages.length > 0 && (
+                      <div className="space-y-2">
+                        {/* Header with stats */}
+                        <div className="text-sm font-semibold border-b pb-2 mb-3 flex justify-between items-center">
+                          <span>Conversation with {selectedConversation.student_name}</span>
+                          <div className="flex gap-2">
+                            <span className="badge badge-success badge-sm">
+                              {conversationMessages.filter(m => m.role === 'user' && !m.is_wrong).length} correct
+                            </span>
+                            <span className="badge badge-error badge-sm">
+                              {conversationMessages.filter(m => m.role === 'user' && m.is_wrong).length} wrong
+                            </span>
+                          </div>
+                        </div>
+
+                        {conversationMessages.map((msg, index) => (
+                          <div key={msg.id}>
+                            {/* Show separator before student answers */}
+                            {msg.role === 'user' && index > 0 && (
+                              <div className="divider text-xs opacity-50 my-1">Answer</div>
+                            )}
+
+                            <div className={`chat ${msg.role === 'user' ? 'chat-end' : 'chat-start'}`}>
+                              <div className="chat-header text-xs mb-1">
+                                {msg.role === 'user' ? 'Student' : 'StoryBot'}
+                                {msg.role === 'user' && (
+                                  msg.is_wrong ? (
+                                    <span className="ml-2 badge badge-error badge-xs">WRONG</span>
+                                  ) : (
+                                    <span className="ml-2 badge badge-success badge-xs">CORRECT</span>
+                                  )
+                                )}
+                              </div>
+                              <div
+                                className={`chat-bubble text-sm ${
+                                  msg.role === 'user'
+                                    ? msg.is_wrong
+                                      ? 'bg-error text-error-content'
+                                      : 'bg-success text-success-content'
+                                    : 'chat-bubble-secondary'
+                                }`}
+                              >
+                                {msg.content}
+                              </div>
+                              <div className="chat-footer text-xs opacity-50">
+                                {new Date(msg.created_at).toLocaleTimeString()}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

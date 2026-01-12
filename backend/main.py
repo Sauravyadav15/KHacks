@@ -87,6 +87,14 @@ def init_db():
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   FOREIGN KEY (conversation_id) REFERENCES student_conversations(id) ON DELETE CASCADE)''')
 
+    # Assistant config table - stores teacher instructions for the AI
+    c.execute('''CREATE TABLE IF NOT EXISTS assistant_config
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  instruction_name TEXT NOT NULL,
+                  instruction_value TEXT NOT NULL,
+                  is_active BOOLEAN DEFAULT 1,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
     conn.commit()
     conn.close()
 

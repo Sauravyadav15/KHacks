@@ -88,11 +88,18 @@ const RegisterForm = ({ onClose, onSubmit }: { onClose: () => void; onSubmit: (f
   );
 };
 
+interface DevAccount {
+  id: number;
+  username: string;
+  full_name: string;
+  account_type: 'student' | 'teacher';
+}
+
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const currentTab = location.pathname === '/teacher' ? 'teacher' : 'student';
-  
+
   // Check both localStorage (persistent) and sessionStorage (temporary)
   const [isLoggedIn, setIsLoggedIn] = useState(
     !!localStorage.getItem('access_token') || !!sessionStorage.getItem('access_token')
@@ -100,6 +107,44 @@ const App: React.FC = () => {
   const [showLogin, setShowLogin] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Dev account switcher state
+  const [devAccounts, setDevAccounts] = useState<DevAccount[]>([]);
+
+  // Fetch dev accounts on mount
+  useEffect(() => {
+    fetchDevAccounts();
+  }, []);
+
+  const fetchDevAccounts = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/accounts/dev/all`);
+      if (response.ok) {
+        const data = await response.json();
+        setDevAccounts(data.accounts);
+      }
+    } catch (error) {
+      console.error('Failed to fetch dev accounts:', error);
+    }
+  };
+
+  const handleDevSwitch = async (username: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/accounts/dev/switch/${username}`, {
+        method: 'POST',
+      });
+      if (response.ok) {
+        const token = await response.json();
+        localStorage.setItem('access_token', token.access_token);
+        sessionStorage.removeItem('access_token');
+        setIsLoggedIn(true);
+        // Refresh to update UI
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Failed to switch account:', error);
+    }
+  };
 
   const handleLogin = async (username: string, password: string, rememberMe: boolean) => {
     setLoading(true);
@@ -193,6 +238,41 @@ const App: React.FC = () => {
         </div>
         
         <div className="navbar-end mr-4 space-x-2">
+          {/* Dev Account Switcher */}
+          <div className="dropdown dropdown-end">
+            <div
+              tabIndex={0}
+              role="button"
+              className="btn btn-outline btn-warning btn-sm"
+            >
+              DEV
+            </div>
+            <ul tabIndex={0} className="mt-3 z-[1] p-2 shadow menu menu-sm dropdown-content bg-base-100 rounded-box w-64 max-h-80 overflow-y-auto">
+              <li className="menu-title text-xs">Quick Account Switch</li>
+              {devAccounts.length === 0 ? (
+                <li><span className="text-gray-500">No accounts found</span></li>
+              ) : (
+                devAccounts.map((account) => (
+                  <li key={account.id}>
+                    <a
+                      onClick={() => handleDevSwitch(account.username)}
+                      className="flex justify-between items-center"
+                    >
+                      <span className="truncate">{account.full_name || account.username}</span>
+                      <span
+                        className={`badge badge-sm ${
+                          account.account_type === 'teacher' ? 'badge-primary' : 'badge-secondary'
+                        }`}
+                      >
+                        {account.account_type === 'teacher' ? 'T' : 'S'}
+                      </span>
+                    </a>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+
           {isLoggedIn ? (
             <div className="dropdown dropdown-end">
               <div tabIndex={0} role="button" className="btn btn-ghost btn-circle avatar placeholder">

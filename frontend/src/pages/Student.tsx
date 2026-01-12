@@ -3,12 +3,14 @@ import React, { useState } from 'react';
 interface Message {
   role: 'user' | 'bot';
   content: string;
+  isWrong?: boolean;
 }
 
 const Student: React.FC = () => {
   const [chatLog, setChatLog] = useState<Message[]>([]);
   const [message, setMessage] = useState('');
   const [threadId, setThreadId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const sendMessage = async () => {
@@ -25,15 +27,23 @@ const Student: React.FC = () => {
     const botMessageIndex = newLog.length;
     setChatLog([...newLog, { role: 'bot', content: '' }]);
 
+    // Get auth token if available
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     try {
       const response = await fetch('http://localhost:8000/student/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           message: userMessage,
           thread_id: threadId,
+          conversation_id: conversationId,
         }),
       });
 
@@ -59,6 +69,9 @@ const Student: React.FC = () => {
 
               if (data.type === 'thread_id') {
                 setThreadId(data.thread_id);
+                if (data.conversation_id) {
+                  setConversationId(data.conversation_id);
+                }
               } else if (data.type === 'content') {
                 accumulatedContent += data.content;
                 // Update the bot message in real-time

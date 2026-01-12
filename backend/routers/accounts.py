@@ -204,3 +204,37 @@ async def get_all_students(current_user: User = Depends(get_current_user)):
     students = [dict(row) for row in rows]
     return {"students": students}
 
+
+# ===== DEV-ONLY ENDPOINTS =====
+
+@router.get("/dev/all")
+async def get_all_accounts_dev():
+    """
+    DEV ONLY: Get all accounts for quick switching during testing.
+    Returns username and account_type only (no sensitive data).
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT id, username, full_name, account_type FROM accounts ORDER BY account_type, username")
+    rows = c.fetchall()
+    conn.close()
+
+    accounts = [dict(row) for row in rows]
+    return {"accounts": accounts}
+
+
+@router.post("/dev/switch/{username}", response_model=Token)
+async def dev_switch_account(username: str):
+    """
+    DEV ONLY: Generate a token for any account without password.
+    This bypasses authentication for testing purposes.
+    """
+    user = get_user(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
+    return {"access_token": access_token, "token_type": "bearer"}
+

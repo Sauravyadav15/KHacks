@@ -1,9 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from pathlib import Path
 import shutil
 from datetime import datetime
 import sqlite3
 from pydantic import BaseModel
+from .accounts import get_current_user, User, DB_PATH as ACCOUNTS_DB_PATH
 
 router = APIRouter(prefix="/teacher", tags=["Teacher"])
 
@@ -472,6 +473,159 @@ async def delete_instruction(instruction_id: int):
         conn.commit()
         conn.close()
         return {"message": "Instruction deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== STUDENT CONVERSATION VIEWING ENDPOINTS =====
+
+@router.get("/students/conversations")
+async def get_all_student_conversations(current_user: User = Depends(get_current_user)):
+    """
+    Get all student conversations with student info. Teachers only.
+    """
+    if current_user.account_type != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view student conversations")
+
+    try:
+        # Get all conversations with student info
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, student_id, thread_id, started_at, last_message_at, has_wrong_answers
+            FROM student_conversations
+            ORDER BY last_message_at DESC
+        """)
+        conversations = [dict(row) for row in c.fetchall()]
+        conn.close()
+
+        # Get student info for each conversation
+        accounts_conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+        accounts_conn.row_factory = sqlite3.Row
+        ac = accounts_conn.cursor()
+
+        for conv in conversations:
+            ac.execute(
+                "SELECT username, full_name FROM accounts WHERE id = ?",
+                (conv['student_id'],)
+            )
+            student = ac.fetchone()
+            if student:
+                conv['student_username'] = student['username']
+                conv['student_name'] = student['full_name']
+            else:
+                conv['student_username'] = 'Unknown'
+                conv['student_name'] = 'Unknown Student'
+
+        accounts_conn.close()
+
+        return {"conversations": conversations}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/students/{student_id}/conversations")
+async def get_student_conversations(student_id: int, current_user: User = Depends(get_current_user)):
+    """
+    Get all conversations for a specific student. Teachers only.
+    """
+    if current_user.account_type != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view student conversations")
+
+    try:
+        # Get student info
+        accounts_conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+        accounts_conn.row_factory = sqlite3.Row
+        ac = accounts_conn.cursor()
+        ac.execute("SELECT username, full_name FROM accounts WHERE id = ? AND account_type = 'student'", (student_id,))
+        student = ac.fetchone()
+        accounts_conn.close()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Get conversations
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, thread_id, started_at, last_message_at, has_wrong_answers
+            FROM student_conversations
+            WHERE student_id = ?
+            ORDER BY last_message_at DESC
+        """, (student_id,))
+        conversations = [dict(row) for row in c.fetchall()]
+        conn.close()
+
+        return {
+            "student": {
+                "id": student_id,
+                "username": student['username'],
+                "full_name": student['full_name']
+            },
+            "conversations": conversations
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: int, current_user: User = Depends(get_current_user)):
+    """
+    Get all messages in a conversation. Teachers only.
+    """
+    if current_user.account_type != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view conversation messages")
+
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        # Get conversation info
+        c.execute("SELECT * FROM student_conversations WHERE id = ?", (conversation_id,))
+        conversation = c.fetchone()
+
+        if not conversation:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Get messages
+        c.execute("""
+            SELECT id, role, content, is_wrong, created_at
+            FROM conversation_messages
+            WHERE conversation_id = ?
+            ORDER BY id ASC
+        """, (conversation_id,))
+        messages = [dict(row) for row in c.fetchall()]
+        conn.close()
+
+        # Get student info
+        accounts_conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+        accounts_conn.row_factory = sqlite3.Row
+        ac = accounts_conn.cursor()
+        ac.execute("SELECT username, full_name FROM accounts WHERE id = ?", (conversation['student_id'],))
+        student = ac.fetchone()
+        accounts_conn.close()
+
+        return {
+            "conversation": {
+                "id": conversation['id'],
+                "student_id": conversation['student_id'],
+                "student_username": student['username'] if student else 'Unknown',
+                "student_name": student['full_name'] if student else 'Unknown',
+                "thread_id": conversation['thread_id'],
+                "started_at": conversation['started_at'],
+                "last_message_at": conversation['last_message_at'],
+                "has_wrong_answers": bool(conversation['has_wrong_answers'])
+            },
+            "messages": messages
+        }
     except HTTPException:
         raise
     except Exception as e:
