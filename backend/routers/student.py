@@ -32,9 +32,6 @@ load_dotenv()
 API_KEY = os.getenv("BACKBOARD_API_KEY")
 client = BackboardClient(API_KEY)
 
-# Store assistant ID (create one once and reuse it, or store in DB)
-ASSISTANT_ID = "610acc47-b81b-4234-bda9-8a8a102ebca1"
-
 # System prompt for the educational story AI
 SYSTEM_PROMPT = """You are an educational storyteller for children. Your job is to teach math through engaging stories.
 
@@ -125,10 +122,32 @@ def get_conversation_by_id(conversation_id: int) -> dict | None:
     conn.close()
     return dict(row) if row else None
 
+def get_student_assistant_id(student_id: int) -> str | None:
+    """Fetch the unique assistant_id for a given student from the accounts table."""
+    if not student_id:
+        return None
+        
+    conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT assistant_id FROM accounts WHERE id = ?", (student_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    return row["assistant_id"] if row else None
+
 @router.post("/chat")
 async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)):
     # Get student_id from token (optional - works without auth too)
     student_id = get_student_id_from_token(authorization) if authorization else None
+
+    user_assistant_id = get_student_assistant_id(student_id) if student_id else None
+
+    if not user_assistant_id:
+        raise HTTPException(
+            status_code=401, 
+            detail="Please log in to start your learning adventure!"
+        )
 
     async def generate_stream():
         nonlocal student_id
@@ -141,7 +160,7 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
             is_first_message = False
             if not current_thread_id:
                 print("Creating new thread...")
-                thread = await client.create_thread(ASSISTANT_ID)
+                thread = await client.create_thread(user_assistant_id)
                 current_thread_id = str(thread.thread_id)
                 is_first_message = True
 

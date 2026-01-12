@@ -1,7 +1,7 @@
 # setup_assistant.py
 import os
 import asyncio
-from dotenv import load_dotenv # Add this
+from dotenv import load_dotenv 
 from backboard import BackboardClient
 
 load_dotenv() 

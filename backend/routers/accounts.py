@@ -5,6 +5,8 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from backboard import BackboardClient
+from dotenv import load_dotenv 
 import sqlite3
 import os
 
@@ -33,7 +35,8 @@ def init_db():
             email TEXT NOT NULL UNIQUE,
             hashed_password TEXT NOT NULL,
             account_active INTEGER NOT NULL DEFAULT 1,
-            account_type TEXT NOT NULL DEFAULT 'student'
+            account_type TEXT NOT NULL DEFAULT 'student',
+            assistant_id TEXT NOT NULL
         );
         """
     )
@@ -42,6 +45,18 @@ def init_db():
     conn.close()
 
 init_db()
+
+async def generate_assistant_id():
+    load_dotenv() 
+    client = BackboardClient(api_key=os.getenv("BACKBOARD_API_KEY"))
+    
+    assistant = await client.create_assistant(
+        name="Story Teller Teacher",
+        description="You are a friendly storyteller who is responsible for teaching a student using your stories. Create a new genre every time. The story should continue forever. Occasionally integrate math problems into the story waiting for an answer. Don't provide the answer in the question.",
+    )
+    
+    return assistant.assistant_id
+    # Copy this ID into student.py as ASSISTANT_ID
 
 class Token(BaseModel):
     access_token: str
@@ -56,6 +71,7 @@ class User(BaseModel):
     full_name: str | None = None
     account_active: bool | None = None
     account_type: str | None = None
+    assistant_id: str
 
 class UserInDB(User):
     hashed_password: str
@@ -91,7 +107,13 @@ def get_user_by_email(email: str) -> UserInDB | None:
     conn = sqlite3.connect(DB_PATH)  # Fix: use account_info.db
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT id, username, full_name, email, hashed_password, account_active, account_type FROM accounts WHERE email = ? LIMIT 1;", (email,))
+    c.execute("""
+        SELECT id, username, full_name, email, hashed_password, 
+               account_active, account_type, assistant_id 
+        FROM accounts 
+        WHERE email = ? 
+        LIMIT 1;
+    """, (email,))
     row = c.fetchone()
     conn.close()
     if row is None:
@@ -102,15 +124,13 @@ def get_user(username:str):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # allows name-based access
     c = conn.cursor()
-    c.execute(
-        """
-        SELECT id, username, full_name, email, hashed_password, account_active, account_type
-        FROM accounts
-        WHERE username = ?
+    c.execute("""
+        SELECT id, username, full_name, email, hashed_password, 
+               account_active, account_type, assistant_id 
+        FROM accounts 
+        WHERE username = ? 
         LIMIT 1;
-        """,
-        (username,),
-    )
+    """, (username,))
     row = c.fetchone()
     conn.close()
     if row is None:
@@ -174,13 +194,17 @@ async def register_user(user: UserCreate):
         raise HTTPException(status_code=400, detail="Email already exists")
     if user.account_type not in ["student", "teacher"]:
         raise HTTPException(status_code=400, detail="Account type must be 'student' or 'teacher'")
+    
+    #Generate assistant ID if account passed the checks
+    raw_id = await generate_assistant_id()
+    assistant_id = str(raw_id) 
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     hashed_password = get_password_hash(user.password)
     c.execute(
-        "INSERT INTO accounts (username, full_name, email, hashed_password, account_active, account_type) VALUES (?, ?, ?, ?, 1, ?)",
-        (user.username, user.full_name, user.email, hashed_password, user.account_type)
+        "INSERT INTO accounts (username, full_name, email, hashed_password, account_active, account_type, assistant_id) VALUES (?, ?, ?, ?, 1, ?, ?)",
+        (user.username, user.full_name, user.email, hashed_password, user.account_type, assistant_id)
     )
     conn.commit()
     conn.close()

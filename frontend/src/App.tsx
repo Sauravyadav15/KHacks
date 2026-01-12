@@ -3,90 +3,15 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
 const API_BASE_URL = 'http://127.0.0.1:8000';
 
-const LoginForm = ({ onClose, onSubmit }: { onClose: () => void; onSubmit: (username: string, password: string, rememberMe: boolean) => void }) => {
-  const modalRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    if (modalRef.current) {
-      modalRef.current.showModal();
-    }
-  }, []);
-
-  return (
-    <dialog ref={modalRef} className="modal" onClose={onClose}>
-      <div className="modal-box">
-        <button type="button" className="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" onClick={onClose}>✕</button>
-        <h3 className="font-bold text-lg mb-6 text-center">Login</h3>
-        <form onSubmit={(e) => {
-          e.preventDefault();
-          const form = e.currentTarget;
-          const username = (form.elements.namedItem('username') as HTMLInputElement).value;
-          const password = (form.elements.namedItem('password') as HTMLInputElement).value;
-          const rememberMe = (form.elements.namedItem('rememberMe') as HTMLInputElement).checked;
-          onSubmit(username, password, rememberMe);
-        }}>
-          <div className="space-y-4">
-            <input name="username" type="text" placeholder="Username" className="input input-bordered w-full" required />
-            <input name="password" type="password" placeholder="Password" className="input input-bordered w-full" required />
-            
-            <div className="form-control">
-              <label className="label cursor-pointer justify-start gap-4">
-                {/* 
-                   Fix: Added 'border-opacity-100' and 'border-gray-400' to ensure visibility 
-                   even if DaisyUI defaults are overridden. 
-                */}
-                <input 
-                  type="checkbox" 
-                  name="rememberMe" 
-                  className="checkbox checkbox-primary border-2 border-base-content/20" 
-                />
-                <span className="label-text">Remember me</span>
-              </label>
-            </div>
-
-            <button type="submit" className="btn btn-primary w-full">Sign In</button>
-          </div>
-        </form>
-      </div>
-    </dialog>
-  );
-};
-
-const RegisterForm = ({ onClose, onSubmit }: { onClose: () => void; onSubmit: (formData: FormData) => void }) => {
-  const modalRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    if (modalRef.current) {
-      modalRef.current.showModal();
-    }
-  }, []);
-
-  return (
-    <dialog ref={modalRef} className="modal" onClose={onClose}>
-      <div className="modal-box">
-        <button type="button" className="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" onClick={onClose}>✕</button>
-        <h3 className="font-bold text-lg mb-6 text-center">Register</h3>
-        <form onSubmit={(e) => {
-          e.preventDefault();
-          const formData = new FormData(e.currentTarget);
-          onSubmit(formData);
-        }}>
-          <div className="space-y-4">
-            <input name="username" type="text" placeholder="Username" className="input input-bordered w-full" required />
-            <input name="full_name" type="text" placeholder="Full Name" className="input input-bordered w-full" required />
-            <input name="email" type="email" placeholder="Email" className="input input-bordered w-full" required />
-            <input name="password" type="password" placeholder="Password" className="input input-bordered w-full" required />
-            <select name="account_type" className="select select-bordered w-full" required>
-              <option value="student">Student</option>
-              <option value="teacher">Teacher</option>
-            </select>
-            <button type="submit" className="btn btn-success w-full">Create Account</button>
-          </div>
-        </form>
-      </div>
-    </dialog>
-  );
-};
+// Define the shape of the context we'll pass down
+export interface ChatContextType {
+  chatLog: any[];
+  setChatLog: React.Dispatch<React.SetStateAction<any[]>>;
+  threadId: string | null;
+  setThreadId: React.Dispatch<React.SetStateAction<string | null>>;
+  conversationId: number | null;
+  setConversationId: React.Dispatch<React.SetStateAction<number | null>>;
+}
 
 interface DevAccount {
   id: number;
@@ -95,23 +20,151 @@ interface DevAccount {
   account_type: 'student' | 'teacher';
 }
 
+const AuthModal = ({ 
+  isOpen, 
+  onClose, 
+  initialMode = 'login',
+  onLogin, 
+  onRegister 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  initialMode?: 'login' | 'register';
+  onLogin: (u: string, p: string, r: boolean) => void;
+  onRegister: (f: FormData) => void;
+}) => {
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  const modalRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    if (isOpen && modalRef.current) {
+      modalRef.current.showModal();
+      setMode(initialMode);
+    } else if (!isOpen && modalRef.current) {
+      modalRef.current.close();
+    }
+  }, [isOpen, initialMode]);
+
+  const toggleMode = () => setMode(mode === 'login' ? 'register' : 'login');
+
+  return (
+    <dialog ref={modalRef} className="modal modal-bottom sm:modal-middle backdrop-blur-sm">
+      <div className="modal-box p-0 overflow-hidden bg-base-100 shadow-xl border border-base-200 max-w-sm w-full">
+        {/* Cleaner Header - Removed heavy background color */}
+        <div className="p-8 pb-4 text-center">
+          <div className="w-12 h-12 bg-primary/10 text-primary rounded-xl flex items-center justify-center mx-auto mb-4 text-2xl">
+             {mode === 'login' ? '🔐' : '🚀'}
+          </div>
+          <h2 className="text-2xl font-bold mb-1 text-base-content">
+            {mode === 'login' ? 'Welcome back' : 'Create an account'}
+          </h2>
+          <p className="text-base-content/60 text-sm">
+            {mode === 'login' ? 'Enter your details to access your account' : 'Start your learning adventure today'}
+          </p>
+        </div>
+
+        <div className="px-8 pb-8">
+          {mode === 'login' ? (
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const form = e.currentTarget;
+              const u = (form.elements.namedItem('username') as HTMLInputElement).value;
+              const p = (form.elements.namedItem('password') as HTMLInputElement).value;
+              const r = (form.elements.namedItem('rememberMe') as HTMLInputElement).checked;
+              onLogin(u, p, r);
+            }} className="flex flex-col gap-3">
+              
+              <div className="form-control">
+                <input name="username" type="text" className="input input-bordered w-full bg-base-200/50 focus:bg-base-100 transition-all" placeholder="Username" required />
+              </div>
+
+              <div className="form-control">
+                <input name="password" type="password" className="input input-bordered w-full bg-base-200/50 focus:bg-base-100 transition-all" placeholder="Password" required />
+                <label className="label cursor-pointer justify-start gap-2 mt-1">
+                  <input name="rememberMe" type="checkbox" className="checkbox checkbox-xs checkbox-primary rounded-md" />
+                  <span className="label-text text-xs text-base-content/70">Keep me logged in</span>
+                </label>
+              </div>
+
+              <button className="btn btn-primary w-full mt-2 no-animation">Sign In</button>
+            </form>
+          ) : (
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.currentTarget);
+              onRegister(formData);
+            }} className="flex flex-col gap-3">
+              
+              <div className="form-control">
+                <input name="username" type="text" className="input input-bordered input-sm w-full bg-base-200/50 focus:bg-base-100" placeholder="Username" required />
+              </div>
+              
+              <div className="form-control">
+                <input name="full_name" type="text" className="input input-bordered input-sm w-full bg-base-200/50 focus:bg-base-100" placeholder="Full Name" required />
+              </div>
+
+              <div className="form-control">
+                <input name="email" type="email" className="input input-bordered input-sm w-full bg-base-200/50 focus:bg-base-100" placeholder="Email address" required />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="form-control">
+                    <input name="password" type="password" className="input input-bordered input-sm w-full bg-base-200/50 focus:bg-base-100" placeholder="Password" required />
+                </div>
+                <div className="form-control">
+                    <select name="account_type" className="select select-bordered select-sm w-full bg-base-200/50 focus:bg-base-100">
+                    <option value="student">Student</option>
+                    <option value="teacher">Teacher</option>
+                    </select>
+                </div>
+              </div>
+              
+              <button className="btn btn-primary w-full mt-4 no-animation">Create Account</button>
+            </form>
+          )}
+
+          {/* Clean Toggle Section */}
+          <div className="mt-6 text-center text-sm">
+            {mode === 'login' ? (
+              <p className="text-base-content/60">
+                New here? <button onClick={toggleMode} className="text-primary font-semibold hover:underline">Create an account</button>
+              </p>
+            ) : (
+              <p className="text-base-content/60">
+                Already have an account? <button onClick={toggleMode} className="text-primary font-semibold hover:underline">Log in</button>
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+      <form method="dialog" className="modal-backdrop bg-base-300/50">
+        <button onClick={onClose}>close</button>
+      </form>
+    </dialog>
+  );
+};
+
 const App: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const currentTab = location.pathname === '/teacher' ? 'teacher' : 'student';
 
-  // Check both localStorage (persistent) and sessionStorage (temporary)
   const [isLoggedIn, setIsLoggedIn] = useState(
     !!localStorage.getItem('access_token') || !!sessionStorage.getItem('access_token')
   );
-  const [showLogin, setShowLogin] = useState(false);
-  const [showRegister, setShowRegister] = useState(false);
+  
+  // Single Modal State
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  
   const [loading, setLoading] = useState(false);
-
-  // Dev account switcher state
   const [devAccounts, setDevAccounts] = useState<DevAccount[]>([]);
 
-  // Fetch dev accounts on mount
+  // Persistent Chat State
+  const [chatLog, setChatLog] = useState<any[]>([]);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<number | null>(null);
+
   useEffect(() => {
     fetchDevAccounts();
   }, []);
@@ -128,6 +181,16 @@ const App: React.FC = () => {
     }
   };
 
+  const openLogin = () => {
+    setAuthMode('login');
+    setAuthModalOpen(true);
+  };
+
+  const openRegister = () => {
+    setAuthMode('register');
+    setAuthModalOpen(true);
+  };
+
   const handleDevSwitch = async (username: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/accounts/dev/switch/${username}`, {
@@ -138,8 +201,7 @@ const App: React.FC = () => {
         localStorage.setItem('access_token', token.access_token);
         sessionStorage.removeItem('access_token');
         setIsLoggedIn(true);
-        // Refresh to update UI
-        window.location.reload();
+        window.location.reload(); 
       }
     } catch (error) {
       console.error('Failed to switch account:', error);
@@ -154,28 +216,25 @@ const App: React.FC = () => {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ username, password }),
       });
-      
+
       if (response.ok) {
         const token = await response.json();
-        
-        // Store based on "Remember Me" preference
         if (rememberMe) {
           localStorage.setItem('access_token', token.access_token);
         } else {
           sessionStorage.setItem('access_token', token.access_token);
         }
-
         setIsLoggedIn(true);
-        setShowLogin(false);
-        alert('Login successful!');
+        setAuthModalOpen(false); // Close modal
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Login failed' }));
         alert('Login failed: ' + (errorData.detail || 'Invalid credentials'));
       }
     } catch (error) {
       alert('Login error: Server unreachable or network issue.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleRegister = async (formData: FormData) => {
@@ -192,10 +251,11 @@ const App: React.FC = () => {
           account_type: formData.get('account_type'),
         }),
       });
-      
+
       if (response.ok) {
         const result = await response.json();
-        setShowRegister(false);
+        // Switch to login mode automatically after success
+        setAuthMode('login');
         alert(result.message || 'Registration successful! Please login.');
       } else {
         try {
@@ -207,64 +267,68 @@ const App: React.FC = () => {
       }
     } catch (error) {
       alert('Registration error: Server unreachable.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleLogout = () => {
-    // Clear both storages to ensure complete logout
     localStorage.removeItem('access_token');
     sessionStorage.removeItem('access_token');
     setIsLoggedIn(false);
-    navigate('/');
     
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
+    // Clear chat state
+    setChatLog([]);
+    setThreadId(null);
+    setConversationId(null);
+
+    navigate('/');
   };
 
   return (
-    <div className="min-h-screen bg-base-200">
-      <div className="navbar bg-base-100 shadow-lg">
-        <div className="navbar-start">
-          <div className="tabs tabs-boxed mx-4">
-            <a className={`tab ${currentTab === 'teacher' ? 'tab-active' : ''}`} onClick={() => navigate('/teacher')}>
+    <div className="h-screen flex flex-col bg-base-100 text-base-content font-sans">
+      {/* Header */}
+      <div className="navbar bg-base-100 border-b border-base-200 px-4">
+        <div className="flex-1">
+          <a className="btn btn-ghost normal-case text-xl text-primary font-bold tracking-tight gap-2">
+            <span className="text-2xl">📚</span> StoryTeller AI
+          </a>
+          
+          {/* Custom Toggle Switch */}
+          <div className="join bg-base-200 p-1 rounded-full ml-6 hidden sm:flex border border-base-300">
+            <button 
+              className={`join-item btn btn-sm btn-ghost rounded-full px-6 transition-all duration-200 hover:bg-white/50 ${currentTab === 'teacher' ? 'bg-white shadow-sm text-primary font-bold' : 'text-base-content/70 font-medium'}`}
+              onClick={() => navigate('/teacher')}
+            >
               Teacher
-            </a>
-            <a className={`tab ${currentTab === 'student' ? 'tab-active' : ''}`} onClick={() => navigate('/student')}>
+            </button>
+            <button 
+              className={`join-item btn btn-sm btn-ghost rounded-full px-6 transition-all duration-200 hover:bg-white/50 ${currentTab === 'student' ? 'bg-white shadow-sm text-primary font-bold' : 'text-base-content/70 font-medium'}`}
+              onClick={() => navigate('/student')}
+            >
               Student
-            </a>
+            </button>
           </div>
         </div>
-        
-        <div className="navbar-end mr-4 space-x-2">
-          {/* Dev Account Switcher */}
-          <div className="dropdown dropdown-end">
-            <div
-              tabIndex={0}
-              role="button"
-              className="btn btn-outline btn-warning btn-sm"
-            >
-              DEV
-            </div>
-            <ul tabIndex={0} className="mt-3 z-[1] p-2 shadow menu menu-sm dropdown-content bg-base-100 rounded-box w-64 max-h-80 overflow-y-auto">
-              <li className="menu-title text-xs">Quick Account Switch</li>
+
+        <div className="flex-none gap-3">
+          {/* Dev Switcher */}
+           <div className="dropdown dropdown-end hidden md:block">
+            <label tabIndex={0} className="btn btn-ghost btn-xs text-info font-normal">DEV TOOLS</label>
+            <ul tabIndex={0} className="dropdown-content z-[20] menu p-2 shadow-lg bg-base-100 rounded-box w-60 border border-base-200">
+              <li className="menu-title px-2 py-1 text-xs opacity-50 uppercase font-bold tracking-wider">Quick Switch</li>
               {devAccounts.length === 0 ? (
-                <li><span className="text-gray-500">No accounts found</span></li>
+                <li className="disabled"><a>No accounts found</a></li>
               ) : (
                 devAccounts.map((account) => (
                   <li key={account.id}>
-                    <a
-                      onClick={() => handleDevSwitch(account.username)}
-                      className="flex justify-between items-center"
-                    >
-                      <span className="truncate">{account.full_name || account.username}</span>
-                      <span
-                        className={`badge badge-sm ${
-                          account.account_type === 'teacher' ? 'badge-primary' : 'badge-secondary'
-                        }`}
-                      >
-                        {account.account_type === 'teacher' ? 'T' : 'S'}
+                    <a onClick={() => handleDevSwitch(account.username)} className="flex justify-between items-center py-2">
+                      <div className="flex flex-col">
+                         <span className="font-medium text-xs">{account.full_name}</span>
+                         <span className="text-[10px] opacity-50">{account.username}</span>
+                      </div>
+                      <span className={`badge badge-xs ${account.account_type === 'teacher' ? 'badge-secondary' : 'badge-primary'}`}>
+                        {account.account_type === 'teacher' ? 'Teacher' : 'Student'}
                       </span>
                     </a>
                   </li>
@@ -275,36 +339,55 @@ const App: React.FC = () => {
 
           {isLoggedIn ? (
             <div className="dropdown dropdown-end">
-              <div tabIndex={0} role="button" className="btn btn-ghost btn-circle avatar placeholder">
-                <div className="bg-neutral text-neutral-content rounded-full w-10">
-                  <span className="text-xl">U</span>
+              <label tabIndex={0} className="btn btn-ghost btn-circle avatar placeholder ring ring-primary ring-offset-base-100 ring-offset-2 w-9 h-9">
+                <div className="bg-neutral text-neutral-content rounded-full w-full">
+                  <span className="text-xs">U</span>
                 </div>
-              </div>
-              <ul tabIndex={0} className="mt-3 z-[1] p-2 shadow menu menu-sm dropdown-content bg-base-100 rounded-box w-52">
+              </label>
+              <ul tabIndex={0} className="mt-3 z-[20] p-2 shadow-xl menu menu-sm dropdown-content bg-base-100 rounded-box w-52 border border-base-200">
                 <li><a>Profile</a></li>
                 <li><a>Settings</a></li>
+                <div className="divider my-1"></div>
                 <li><a onClick={handleLogout} className="text-error">Logout</a></li>
               </ul>
             </div>
           ) : (
-            <>
-              <button className="btn btn-primary btn-sm" onClick={() => setShowLogin(true)} disabled={loading}>
-                Login
+            <div className="flex gap-2">
+              <button 
+                className="btn btn-ghost btn-sm font-normal hover:bg-base-200" 
+                onClick={openLogin} 
+                disabled={loading}
+              >
+                Log in
               </button>
-              <button className="btn btn-success btn-sm" onClick={() => setShowRegister(true)} disabled={loading}>
-                Register
+              <button 
+                className="btn btn-primary btn-sm px-4 shadow-sm font-medium" 
+                onClick={openRegister} 
+                disabled={loading}
+              >
+                Sign up
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>
 
-      <main className="p-6">
-        <Outlet />
-      </main>
+      {/* Unified Auth Modal */}
+      <AuthModal 
+        isOpen={authModalOpen} 
+        onClose={() => setAuthModalOpen(false)}
+        initialMode={authMode}
+        onLogin={handleLogin}
+        onRegister={handleRegister}
+      />
 
-      {showLogin && <LoginForm onClose={() => setShowLogin(false)} onSubmit={handleLogin} />}
-      {showRegister && <RegisterForm onClose={() => setShowRegister(false)} onSubmit={handleRegister} />}
+      <div className="flex-1 overflow-hidden relative bg-base-50">
+        <Outlet context={{ 
+          chatLog, setChatLog, 
+          threadId, setThreadId, 
+          conversationId, setConversationId 
+        }} />
+      </div>
     </div>
   );
 };
