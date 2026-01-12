@@ -79,15 +79,22 @@ def init_db():
                   last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   has_wrong_answers BOOLEAN DEFAULT 0)''')
 
-    # Conversation messages table - stores messages with wrong answer flags
+    # Conversation messages table - stores messages with wrong answer flags and difficulty
     c.execute('''CREATE TABLE IF NOT EXISTS conversation_messages
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   conversation_id INTEGER NOT NULL,
                   role TEXT NOT NULL,
                   content TEXT NOT NULL,
                   is_wrong BOOLEAN DEFAULT 0,
+                  difficulty TEXT,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   FOREIGN KEY (conversation_id) REFERENCES student_conversations(id) ON DELETE CASCADE)''')
+
+    # Add difficulty column if it doesn't exist (migration for existing DBs)
+    try:
+        c.execute("ALTER TABLE conversation_messages ADD COLUMN difficulty TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
     # Assistant config table - stores teacher instructions for the AI
     c.execute('''CREATE TABLE IF NOT EXISTS assistant_config
@@ -96,6 +103,16 @@ def init_db():
                   instruction_value TEXT NOT NULL,
                   is_active BOOLEAN DEFAULT 1,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+
+    # Student lessons table - tracks which lessons each student has started
+    c.execute('''CREATE TABLE IF NOT EXISTS student_lessons
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  student_id INTEGER NOT NULL,
+                  file_id INTEGER NOT NULL,
+                  backboard_doc_id TEXT,
+                  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(student_id, file_id))''')
 
     conn.commit()
     conn.close()
