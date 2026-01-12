@@ -1,19 +1,26 @@
 # student.py
 import os
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from backboard import BackboardClient
 import sqlite3
+from .accounts import get_current_user, User, oauth2_scheme
+from jose import JWTError, jwt
 
 # Initialize router
 router = APIRouter(prefix="/student", tags=["Student"])
 
+# For token decoding
+SECRET_KEY = "07491e256c50c40b71a9ddc14d90e0dd438d8863fe00ae90abc3b72878bb0741"
+ALGORITHM = "HS256"
+
 # Request model
 class ChatRequest(BaseModel):
     thread_id: str | None = None
+    conversation_id: int | None = None
     message: str
 
 #Load .env file

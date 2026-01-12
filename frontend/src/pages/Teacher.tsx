@@ -27,6 +27,13 @@ interface Instruction {
   created_at: string;
 }
 
+interface Student {
+  username: string;
+  full_name: string;
+  email: string;
+  account_active: number;
+}
+
 const Teacher: React.FC = () => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -36,9 +43,14 @@ const Teacher: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   // Configuration tab state
-  const [activeTab, setActiveTab] = useState<'files' | 'config'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'config' | 'students'>('files');
   const [instructions, setInstructions] = useState<Instruction[]>([]);
   const [newInstruction, setNewInstruction] = useState({ name: '', value: '' });
+
+  // Students tab state
+  const [students, setStudents] = useState<Student[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsError, setStudentsError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchCategories();
@@ -49,7 +61,31 @@ const Teacher: React.FC = () => {
     if (activeTab === 'config') {
       fetchInstructions();
     }
+    if (activeTab === 'students') {
+      fetchStudents();
+    }
   }, [activeTab]);
+
+  const fetchStudents = async () => {
+    setStudentsLoading(true);
+    setStudentsError(null);
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      if (!token) {
+        setStudentsError('You must be logged in as a teacher to view students');
+        return;
+      }
+      const response = await axios.get('http://localhost:8000/accounts/students', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setStudents(response.data.students);
+    } catch (err: any) {
+      console.error("Failed to fetch students", err);
+      setStudentsError(err.response?.data?.detail || 'Failed to fetch students');
+    } finally {
+      setStudentsLoading(false);
+    }
+  };
 
   const fetchCategories = async () => {
     try {
@@ -249,6 +285,12 @@ const Teacher: React.FC = () => {
           onClick={() => setActiveTab('config')}
         >
           Configuration
+        </a>
+        <a
+          className={`tab tab-lg ${activeTab === 'students' ? 'tab-active' : ''}`}
+          onClick={() => setActiveTab('students')}
+        >
+          Students
         </a>
       </div>
 
@@ -574,6 +616,60 @@ const Teacher: React.FC = () => {
             </div>
           </div>
         </>
+      )}
+
+      {/* Students Tab Content */}
+      {activeTab === 'students' && (
+        <div className="card bg-base-100 shadow-xl">
+          <div className="card-body">
+            <h2 className="card-title text-2xl mb-4">Student List</h2>
+
+            {studentsLoading && (
+              <div className="flex justify-center py-8">
+                <span className="loading loading-spinner loading-lg"></span>
+              </div>
+            )}
+
+            {studentsError && (
+              <div className="alert alert-error">
+                <span>{studentsError}</span>
+              </div>
+            )}
+
+            {!studentsLoading && !studentsError && students.length === 0 && (
+              <p className="text-gray-500 italic">No students registered yet.</p>
+            )}
+
+            {!studentsLoading && !studentsError && students.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="table table-zebra w-full">
+                  <thead>
+                    <tr>
+                      <th>Username</th>
+                      <th>Full Name</th>
+                      <th>Email</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.map((student) => (
+                      <tr key={student.username}>
+                        <td>{student.username}</td>
+                        <td>{student.full_name}</td>
+                        <td>{student.email}</td>
+                        <td>
+                          <span className={`badge ${student.account_active ? 'badge-success' : 'badge-error'}`}>
+                            {student.account_active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

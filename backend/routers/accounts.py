@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import sqlite3
+import os
+
+# Get the directory where this file is located, then go up one level to backend/
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "account_info.db")
 
 #THIS NEEDS TO REMAIN PRIVATE, fine for now since we have no user data to secure
 SECRET_KEY = "07491e256c50c40b71a9ddc14d90e0dd438d8863fe00ae90abc3b72878bb0741"
@@ -17,7 +21,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 5256000
 router = APIRouter(prefix="/accounts", tags=["Accounts"])
 
 def init_db():
-    conn = sqlite3.connect('account_info.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute(
@@ -28,7 +32,8 @@ def init_db():
             full_name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
             hashed_password TEXT NOT NULL,
-            account_active INTEGER NOT NULL DEFAULT 1
+            account_active INTEGER NOT NULL DEFAULT 1,
+            account_type TEXT NOT NULL DEFAULT 'student'
         );
         """
     )
@@ -50,6 +55,7 @@ class User(BaseModel):
     email: str | None = None
     full_name: str | None = None
     account_active: bool | None = None
+    account_type: str | None = None
 
 class UserInDB(User):
     hashed_password: str
@@ -59,6 +65,7 @@ class UserCreate(BaseModel):
     full_name: str
     email: str
     password: str
+    account_type: str = "student"  # "student" or "teacher"
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -70,7 +77,7 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 def username_exists(username: str) -> bool:
-    conn = sqlite3.connect("account_info.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
         "SELECT 1 FROM accounts WHERE username = ? LIMIT 1;",
@@ -81,10 +88,10 @@ def username_exists(username: str) -> bool:
     return row is not None
 
 def get_user_by_email(email: str) -> UserInDB | None:
-    conn = sqlite3.connect("account_info.db")  # Fix: use account_info.db
+    conn = sqlite3.connect(DB_PATH)  # Fix: use account_info.db
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT id, username, full_name, email, hashed_password, account_active FROM accounts WHERE email = ? LIMIT 1;", (email,))
+    c.execute("SELECT id, username, full_name, email, hashed_password, account_active, account_type FROM accounts WHERE email = ? LIMIT 1;", (email,))
     row = c.fetchone()
     conn.close()
     if row is None:
@@ -92,12 +99,12 @@ def get_user_by_email(email: str) -> UserInDB | None:
     return UserInDB(**dict(row))
 
 def get_user(username:str):
-    conn = sqlite3.connect("account_info.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # allows name-based access
     c = conn.cursor()
     c.execute(
         """
-        SELECT id, username, full_name, email, hashed_password, account_active
+        SELECT id, username, full_name, email, hashed_password, account_active, account_type
         FROM accounts
         WHERE username = ?
         LIMIT 1;
@@ -108,7 +115,7 @@ def get_user(username:str):
     conn.close()
     if row is None:
         return None
-    
+
     return UserInDB(**dict(row))
 
 def authenticate_user(username: str, password: str):
@@ -165,15 +172,35 @@ async def register_user(user: UserCreate):
         raise HTTPException(status_code=400, detail="Username already exists")
     if get_user_by_email(user.email):
         raise HTTPException(status_code=400, detail="Email already exists")
-    
-    conn = sqlite3.connect("account_info.db")
+    if user.account_type not in ["student", "teacher"]:
+        raise HTTPException(status_code=400, detail="Account type must be 'student' or 'teacher'")
+
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     hashed_password = get_password_hash(user.password)
     c.execute(
-        "INSERT INTO accounts (username, full_name, email, hashed_password, account_active) VALUES (?, ?, ?, ?, 1)",
-        (user.username, user.full_name, user.email, hashed_password)
+        "INSERT INTO accounts (username, full_name, email, hashed_password, account_active, account_type) VALUES (?, ?, ?, ?, 1, ?)",
+        (user.username, user.full_name, user.email, hashed_password, user.account_type)
     )
     conn.commit()
     conn.close()
     return {"message": "User created successfully"}
+
+@router.get("/students")
+async def get_all_students(current_user: User = Depends(get_current_user)):
+    # Only teachers can view all students
+    if current_user.account_type != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view student list")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute(
+        "SELECT username, full_name, email, account_active FROM accounts WHERE account_type = 'student'"
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    students = [dict(row) for row in rows]
+    return {"students": students}
 

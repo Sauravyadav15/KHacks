@@ -68,6 +68,25 @@ def init_db():
                   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
                   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE)''')
 
+    # Student conversations table - links conversations to student accounts
+    c.execute('''CREATE TABLE IF NOT EXISTS student_conversations
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  student_id INTEGER NOT NULL,
+                  thread_id TEXT,
+                  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  has_wrong_answers BOOLEAN DEFAULT 0)''')
+
+    # Conversation messages table - stores messages with wrong answer flags
+    c.execute('''CREATE TABLE IF NOT EXISTS conversation_messages
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  conversation_id INTEGER NOT NULL,
+                  role TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  is_wrong BOOLEAN DEFAULT 0,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  FOREIGN KEY (conversation_id) REFERENCES student_conversations(id) ON DELETE CASCADE)''')
+
     conn.commit()
     conn.close()
 

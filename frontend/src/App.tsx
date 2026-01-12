@@ -76,6 +76,10 @@ const RegisterForm = ({ onClose, onSubmit }: { onClose: () => void; onSubmit: (f
             <input name="full_name" type="text" placeholder="Full Name" className="input input-bordered w-full" required />
             <input name="email" type="email" placeholder="Email" className="input input-bordered w-full" required />
             <input name="password" type="password" placeholder="Password" className="input input-bordered w-full" required />
+            <select name="account_type" className="select select-bordered w-full" required>
+              <option value="student">Student</option>
+              <option value="teacher">Teacher</option>
+            </select>
             <button type="submit" className="btn btn-success w-full">Create Account</button>
           </div>
         </form>
@@ -140,6 +144,7 @@ const App: React.FC = () => {
           full_name: formData.get('full_name'),
           email: formData.get('email'),
           password: formData.get('password'),
+          account_type: formData.get('account_type'),
         }),
       });
       
