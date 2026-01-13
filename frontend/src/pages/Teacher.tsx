@@ -83,6 +83,10 @@ const Teacher: React.FC = () => {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [selectedStudentFilter, setSelectedStudentFilter] = useState<number | null>(null);
 
+  // Accordion state (Saurav's UX pattern)
+  const [expandedStudents, setExpandedStudents] = useState<Set<number>>(new Set());
+  const [expandedConversations, setExpandedConversations] = useState<Set<number>>(new Set());
+
   useEffect(() => {
     fetchCategories();
     fetchFiles();
@@ -183,6 +187,59 @@ const Teacher: React.FC = () => {
       return conversations;
     }
     return conversations.filter(c => c.student_id === selectedStudentFilter);
+  };
+
+  // Group conversations by student (Saurav's pattern)
+  const getConversationsGroupedByStudent = () => {
+    const grouped: Record<number, { student: { id: number; name: string }; conversations: Conversation[] }> = {};
+
+    conversations.forEach(conv => {
+      if (!grouped[conv.student_id]) {
+        grouped[conv.student_id] = {
+          student: {
+            id: conv.student_id,
+            name: conv.student_name || conv.student_username || `Student ${conv.student_id}`
+          },
+          conversations: []
+        };
+      }
+      grouped[conv.student_id].conversations.push(conv);
+    });
+
+    return Object.values(grouped);
+  };
+
+  // Toggle student accordion
+  const toggleStudentExpanded = (studentId: number) => {
+    setExpandedStudents(prev => {
+      const next = new Set(prev);
+      if (next.has(studentId)) {
+        next.delete(studentId);
+      } else {
+        next.add(studentId);
+      }
+      return next;
+    });
+  };
+
+  // Toggle conversation expanded and fetch messages
+  const toggleConversationExpanded = async (conv: Conversation) => {
+    const isExpanded = expandedConversations.has(conv.id);
+
+    setExpandedConversations(prev => {
+      const next = new Set(prev);
+      if (isExpanded) {
+        next.delete(conv.id);
+      } else {
+        next.add(conv.id);
+      }
+      return next;
+    });
+
+    // Fetch messages when expanding
+    if (!isExpanded) {
+      await fetchConversationMessages(conv.id);
+    }
   };
 
   const fetchCategories = async () => {
@@ -827,26 +884,10 @@ const Teacher: React.FC = () => {
             </div>
           </div>
 
-          {/* Conversation Viewer */}
+          {/* Conversation Viewer - Accordion Style (Saurav's UX) */}
           <div className="card bg-base-100 shadow-xl">
             <div className="card-body">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="card-title text-2xl">Student Conversations</h2>
-                <select
-                  className="select select-bordered"
-                  value={selectedStudentFilter ?? ''}
-                  onChange={(e) => setSelectedStudentFilter(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">All Students</option>
-                  {conversations
-                    .filter((c, i, arr) => arr.findIndex(x => x.student_id === c.student_id) === i)
-                    .map((c) => (
-                      <option key={c.student_id} value={c.student_id}>
-                        {c.student_name || c.student_username}
-                      </option>
-                    ))}
-                </select>
-              </div>
+              <h2 className="card-title text-2xl mb-4">Student Conversations</h2>
 
               {conversationsLoading && (
                 <div className="flex justify-center py-8">
@@ -854,116 +895,133 @@ const Teacher: React.FC = () => {
                 </div>
               )}
 
-              {!conversationsLoading && getFilteredConversations().length === 0 && (
-                <p className="text-gray-500 italic">No conversations yet.</p>
+              {!conversationsLoading && conversations.length === 0 && (
+                <p className="text-gray-500 italic">No conversations yet. Students will appear here once they start learning.</p>
               )}
 
-              {!conversationsLoading && getFilteredConversations().length > 0 && (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Conversation List */}
-                  <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {getFilteredConversations().map((conv) => (
-                      <div
-                        key={conv.id}
-                        className={`card cursor-pointer transition-all ${
-                          selectedConversation?.id === conv.id
-                            ? 'bg-primary text-primary-content'
-                            : 'bg-base-200 hover:bg-base-300'
-                        }`}
-                        onClick={() => fetchConversationMessages(conv.id)}
-                      >
-                        <div className="card-body p-3">
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <p className="font-semibold">{conv.student_name || conv.student_username}</p>
-                              <p className="text-xs opacity-70">
-                                {new Date(conv.started_at).toLocaleDateString()} {new Date(conv.started_at).toLocaleTimeString()}
-                              </p>
-                            </div>
-                            {conv.has_wrong_answers ? (
-                              <span className="badge badge-error badge-sm">Has Errors</span>
-                            ) : (
-                              <span className="badge badge-success badge-sm">All Correct</span>
-                            )}
-                          </div>
-                        </div>
+              {!conversationsLoading && conversations.length > 0 && (
+                <div className="space-y-3">
+                  {getConversationsGroupedByStudent().map(({ student, conversations: studentConvs }) => (
+                    <div key={student.id} className="collapse collapse-arrow bg-base-200 rounded-lg">
+                      <input
+                        type="checkbox"
+                        checked={expandedStudents.has(student.id)}
+                        onChange={() => toggleStudentExpanded(student.id)}
+                      />
+                      <div className="collapse-title text-lg font-semibold flex items-center gap-3">
+                        <span>{student.name}</span>
+                        <span className="badge badge-neutral badge-sm">
+                          {studentConvs.length} session{studentConvs.length !== 1 ? 's' : ''}
+                        </span>
+                        {studentConvs.some(c => c.has_wrong_answers) && (
+                          <span className="badge badge-warning badge-sm">Needs Review</span>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                      <div className="collapse-content">
+                        <div className="space-y-3 pt-2">
+                          {studentConvs.map((conv) => (
+                            <div key={conv.id} className="card bg-base-100 shadow">
+                              <div className="card-body p-4">
+                                {/* Session Header */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1">
+                                    <p className="font-semibold">
+                                      Session #{conv.id}
+                                    </p>
+                                    <p className="text-sm text-gray-500">
+                                      Started: {new Date(conv.started_at).toLocaleString()}
+                                    </p>
+                                    {conv.last_message_at && (
+                                      <p className="text-sm text-gray-500">
+                                        Last activity: {new Date(conv.last_message_at).toLocaleString()}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {conv.has_wrong_answers ? (
+                                      <span className="badge badge-error badge-sm">Has Errors</span>
+                                    ) : (
+                                      <span className="badge badge-success badge-sm">All Correct</span>
+                                    )}
+                                    <button
+                                      onClick={() => toggleConversationExpanded(conv)}
+                                      className="btn btn-sm btn-primary"
+                                    >
+                                      {expandedConversations.has(conv.id) ? 'Hide' : 'View'} Chat
+                                    </button>
+                                  </div>
+                                </div>
 
-                  {/* Message Viewer */}
-                  <div className="bg-base-200 rounded-lg p-4 max-h-96 overflow-y-auto">
-                    {messagesLoading && (
-                      <div className="flex justify-center py-8">
-                        <span className="loading loading-spinner loading-md"></span>
-                      </div>
-                    )}
+                                {/* Expanded Chat History */}
+                                {expandedConversations.has(conv.id) && (
+                                  <div className="mt-4 border-t pt-4">
+                                    {messagesLoading && selectedConversation?.id === conv.id ? (
+                                      <div className="flex justify-center py-4">
+                                        <span className="loading loading-spinner loading-md"></span>
+                                      </div>
+                                    ) : selectedConversation?.id === conv.id && conversationMessages.length > 0 ? (
+                                      <>
+                                        {/* Stats Header */}
+                                        <div className="flex justify-between items-center mb-3">
+                                          <h4 className="font-semibold">
+                                            Chat History ({conversationMessages.length} messages)
+                                          </h4>
+                                          <div className="flex gap-2">
+                                            <span className="badge badge-success badge-sm">
+                                              {conversationMessages.filter(m => m.role === 'user' && !m.is_wrong).length} correct
+                                            </span>
+                                            <span className="badge badge-error badge-sm">
+                                              {conversationMessages.filter(m => m.role === 'user' && m.is_wrong).length} wrong
+                                            </span>
+                                          </div>
+                                        </div>
 
-                    {!messagesLoading && !selectedConversation && (
-                      <p className="text-gray-500 italic text-center py-8">
-                        Select a conversation to view messages
-                      </p>
-                    )}
-
-                    {!messagesLoading && selectedConversation && conversationMessages.length === 0 && (
-                      <p className="text-gray-500 italic text-center py-8">
-                        No messages in this conversation
-                      </p>
-                    )}
-
-                    {!messagesLoading && selectedConversation && conversationMessages.length > 0 && (
-                      <div className="space-y-2">
-                        {/* Header with stats */}
-                        <div className="text-sm font-semibold border-b pb-2 mb-3 flex justify-between items-center">
-                          <span>Conversation with {selectedConversation.student_name}</span>
-                          <div className="flex gap-2">
-                            <span className="badge badge-success badge-sm">
-                              {conversationMessages.filter(m => m.role === 'user' && !m.is_wrong).length} correct
-                            </span>
-                            <span className="badge badge-error badge-sm">
-                              {conversationMessages.filter(m => m.role === 'user' && m.is_wrong).length} wrong
-                            </span>
-                          </div>
-                        </div>
-
-                        {conversationMessages.map((msg, index) => (
-                          <div key={msg.id}>
-                            {/* Show separator before student answers */}
-                            {msg.role === 'user' && index > 0 && (
-                              <div className="divider text-xs opacity-50 my-1">Answer</div>
-                            )}
-
-                            <div className={`chat ${msg.role === 'user' ? 'chat-end' : 'chat-start'}`}>
-                              <div className="chat-header text-xs mb-1">
-                                {msg.role === 'user' ? 'Student' : 'StoryBot'}
-                                {msg.role === 'user' && (
-                                  msg.is_wrong ? (
-                                    <span className="ml-2 badge badge-error badge-xs">WRONG</span>
-                                  ) : (
-                                    <span className="ml-2 badge badge-success badge-xs">CORRECT</span>
-                                  )
+                                        {/* Chat Bubbles */}
+                                        <div className="bg-base-200 rounded-lg p-4 max-h-96 overflow-y-auto space-y-3">
+                                          {conversationMessages.map((msg, idx) => (
+                                            <div key={msg.id || idx} className={`chat ${msg.role === 'user' ? 'chat-end' : 'chat-start'}`}>
+                                              <div className="chat-header text-xs mb-1">
+                                                {msg.role === 'user' ? 'Student' : 'StoryBot'}
+                                                {msg.role === 'user' && (
+                                                  msg.is_wrong ? (
+                                                    <span className="ml-2 badge badge-error badge-xs">WRONG</span>
+                                                  ) : (
+                                                    <span className="ml-2 badge badge-success badge-xs">CORRECT</span>
+                                                  )
+                                                )}
+                                              </div>
+                                              <div
+                                                className={`chat-bubble text-sm ${
+                                                  msg.role === 'user'
+                                                    ? msg.is_wrong
+                                                      ? 'bg-error text-error-content'
+                                                      : 'bg-success text-success-content'
+                                                    : 'chat-bubble-secondary'
+                                                }`}
+                                              >
+                                                {msg.content}
+                                              </div>
+                                              <div className="chat-footer text-xs opacity-50">
+                                                {new Date(msg.created_at).toLocaleTimeString()}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <p className="text-gray-500 italic text-center py-4">
+                                        No messages in this conversation yet.
+                                      </p>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-                              <div
-                                className={`chat-bubble text-sm ${
-                                  msg.role === 'user'
-                                    ? msg.is_wrong
-                                      ? 'bg-error text-error-content'
-                                      : 'bg-success text-success-content'
-                                    : 'chat-bubble-secondary'
-                                }`}
-                              >
-                                {msg.content}
-                              </div>
-                              <div className="chat-footer text-xs opacity-50">
-                                {new Date(msg.created_at).toLocaleTimeString()}
-                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
