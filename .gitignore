@@ -29,6 +29,8 @@ dist-ssr
 
 # Backend uploads
 backend/uploads/
+backend/venv/
+
 
 # Claude Code
 .claude/
