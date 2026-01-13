@@ -30,11 +30,86 @@ const Student: React.FC = () => {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [lessonsLoading, setLessonsLoading] = useState(false);
   const [startingLesson, setStartingLesson] = useState<number | null>(null);
+  const [isChatEnded, setIsChatEnded] = useState(false);
+  const [selectedLessonId, setSelectedLessonId] = useState<number | null>(null);
 
   // Fetch available lessons on mount
   useEffect(() => {
     fetchLessons();
   }, []);
+
+  // Auto-load chat for selected lesson when it changes
+  useEffect(() => {
+    if (selectedLessonId !== null) {
+      // Always load from server to get the latest state
+      loadLessonChat(selectedLessonId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLessonId]);
+
+  // Load chat history for a lesson
+  const loadLessonChat = async (fileId: number) => {
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+    if (!token) return;
+
+    try {
+      const response = await fetch(`http://localhost:8000/student/conversations/lesson/${fileId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const conv = data.conversation;
+        const messages = data.messages || [];
+
+        // Convert messages to chat log format
+        const chatLogMessages: Message[] = messages.map((msg: any) => ({
+          role: msg.role === 'user' ? 'user' : 'bot',
+          content: msg.content,
+          isWrong: msg.is_wrong ? true : false
+        }));
+
+        // Always update global chat state when loading a lesson (only if this is the selected lesson)
+        if (selectedLessonId === fileId) {
+          setConversationId(conv?.id || null);
+          setThreadId(conv?.thread_id || null);
+          setChatLog(chatLogMessages);
+          setIsChatEnded(conv?.ended_at ? true : false);
+          
+          console.log(`Loaded chat for lesson ${fileId}: ${chatLogMessages.length} messages, conversation ${conv?.id || 'new'}`);
+        }
+      } else {
+        // No conversation exists yet - clear the chat
+        if (selectedLessonId === fileId) {
+          setConversationId(null);
+          setThreadId(null);
+          setChatLog([]);
+          setIsChatEnded(false);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load lesson chat:', error);
+      // On error, clear chat for this lesson
+      if (selectedLessonId === fileId) {
+        setConversationId(null);
+        setThreadId(null);
+        setChatLog([]);
+        setIsChatEnded(false);
+      }
+    }
+  };
+
+  // Handle lesson selection
+  const handleLessonSelect = async (lessonId: number, lessonStarted: boolean) => {
+    if (!lessonStarted) {
+      // If lesson not started, start it first
+      await handleStartLesson(lessonId);
+      return;
+    }
+
+    // Switch to new lesson - this will trigger useEffect to load chat from server
+    setSelectedLessonId(lessonId);
+  };
 
   const fetchLessons = async () => {
     const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
@@ -47,7 +122,17 @@ const Student: React.FC = () => {
       });
       if (response.ok) {
         const data = await response.json();
-        setLessons(data.lessons || []);
+        const fetchedLessons = data.lessons || [];
+        setLessons(fetchedLessons);
+        
+        // Auto-select the first started lesson when student logs in
+        if (selectedLessonId === null && fetchedLessons.length > 0) {
+          const firstStartedLesson = fetchedLessons.find((l: Lesson) => l.started);
+          if (firstStartedLesson) {
+            setSelectedLessonId(firstStartedLesson.id);
+            // This will trigger the useEffect to load the chat
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to fetch lessons:', error);
@@ -75,6 +160,8 @@ const Student: React.FC = () => {
         alert(result.message || 'Lesson started! You can now chat about this topic.');
         // Refresh lessons to update UI
         await fetchLessons();
+        // Automatically select this lesson and load its chat
+        await handleLessonSelect(lessonId, true);
       } else {
         const error = await response.json();
         alert('Failed to start lesson: ' + (error.detail || 'Unknown error'));
@@ -87,8 +174,41 @@ const Student: React.FC = () => {
     }
   };
 
+  const handleEndChat = async () => {
+    if (!conversationId) {
+      alert('No active chat to end');
+      return;
+    }
+
+    if (window.confirm('Are you sure you want to end this chat session?')) {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      if (!token) {
+        alert('Please log in to end chat');
+        return;
+      }
+
+      try {
+        const response = await fetch(`http://localhost:8000/student/end-chat/${conversationId}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Failed to end chat');
+        }
+
+        setIsChatEnded(true);
+        alert('Chat session ended successfully!');
+      } catch (err: any) {
+        console.error('Error ending chat:', err);
+        alert('Failed to end chat session: ' + (err.message || 'Unknown error'));
+      }
+    }
+  };
+
   const sendMessage = async () => {
-    if (!message || isLoading) return;
+    if (!message || isLoading || isChatEnded) return;
 
     const userMessage = message;
 
@@ -120,6 +240,7 @@ const Student: React.FC = () => {
           message: userMessage,
           thread_id: threadId,
           conversation_id: conversationId,
+          file_id: selectedLessonId,  // Send lesson ID with chat request
         }),
       });
 
@@ -226,23 +347,20 @@ const Student: React.FC = () => {
                     <button
                       className={`btn btn-sm ml-2 ${
                         lesson.started
-                          ? 'btn-success'
+                          ? selectedLessonId === lesson.id
+                            ? 'btn-primary'
+                            : 'btn-success'
                           : 'btn-primary'
                       }`}
                       onClick={() => {
-                        if (lesson.started) {
-                          // Just focus on chat input for continue
-                          document.querySelector('input[type="text"]')?.focus();
-                        } else {
-                          handleStartLesson(lesson.id);
-                        }
+                        handleLessonSelect(lesson.id, lesson.started);
                       }}
                       disabled={startingLesson === lesson.id}
                     >
                       {startingLesson === lesson.id ? (
                         <span className="loading loading-spinner loading-xs"></span>
                       ) : lesson.started ? (
-                        'Continue'
+                        selectedLessonId === lesson.id ? 'Selected' : 'Continue'
                       ) : (
                         'Start Learning'
                       )}
@@ -292,17 +410,24 @@ const Student: React.FC = () => {
           type="text" 
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !isLoading && sendMessage()}
-          placeholder="Say something..." 
+          onKeyDown={(e) => e.key === 'Enter' && !isLoading && !isChatEnded && sendMessage()}
+          placeholder={isChatEnded ? "Chat ended" : "Say something..."} 
           className="input input-bordered flex-1"
-          disabled={isLoading}
+          disabled={isLoading || isChatEnded}
         />
         <button 
           className="btn btn-primary"
           onClick={sendMessage}
-          disabled={isLoading}
+          disabled={isLoading || !message || isChatEnded}
         >
           {isLoading ? 'Sending...' : 'Send'}
+        </button>
+        <button
+          onClick={handleEndChat}
+          className="btn btn-error"
+          disabled={!conversationId || isChatEnded}
+        >
+          {isChatEnded ? 'Chat Ended' : 'End Chat'}
         </button>
       </div>
     </div>

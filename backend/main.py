@@ -70,14 +70,28 @@ def init_db():
                   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
                   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE)''')
 
-    # Student conversations table - links conversations to student accounts
+    # Student conversations table - links conversations to student accounts and lessons
     c.execute('''CREATE TABLE IF NOT EXISTS student_conversations
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   student_id INTEGER NOT NULL,
+                  file_id INTEGER,
                   thread_id TEXT,
                   started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  has_wrong_answers BOOLEAN DEFAULT 0)''')
+                  has_wrong_answers BOOLEAN DEFAULT 0,
+                  ended_at TIMESTAMP)''')
+    
+    # Add ended_at column if it doesn't exist (migration for existing DBs)
+    try:
+        c.execute("ALTER TABLE student_conversations ADD COLUMN ended_at TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    
+    # Add file_id column if it doesn't exist (migration for existing DBs)
+    try:
+        c.execute("ALTER TABLE student_conversations ADD COLUMN file_id INTEGER")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
     # Conversation messages table - stores messages with wrong answer flags and difficulty
     c.execute('''CREATE TABLE IF NOT EXISTS conversation_messages

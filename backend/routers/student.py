@@ -60,6 +60,7 @@ FEEDBACK_RESPONSE_FORMAT = {
 class ChatRequest(BaseModel):
     thread_id: str | None = None
     conversation_id: int | None = None
+    file_id: int | None = None  # Lesson/File ID for lesson-specific chats
     message: str
 
 #Load .env file
@@ -67,6 +68,8 @@ load_dotenv()
 
 # Initialize Backboard Client
 API_KEY = os.getenv("BACKBOARD_API_KEY")
+BACKBOARD_API_KEY = API_KEY
+BACKBOARD_BASE_URL = "https://app.backboard.io/api"
 client = BackboardClient(API_KEY)
 
 # System prompt for the educational story AI (structured output version)
@@ -232,13 +235,13 @@ def get_performance_stats(conversation_id: int) -> dict:
             'difficulty_distribution': {}
         }
 
-def create_conversation(student_id: int, thread_id: str) -> int:
+def create_conversation(student_id: int, thread_id: str, file_id: int | None = None) -> int:
     """Create a new conversation for a student and return its ID."""
     conn = sqlite3.connect('chat_history.db')
     c = conn.cursor()
     c.execute(
-        "INSERT INTO student_conversations (student_id, thread_id) VALUES (?, ?)",
-        (student_id, thread_id)
+        "INSERT INTO student_conversations (student_id, thread_id, file_id) VALUES (?, ?, ?)",
+        (student_id, thread_id, file_id)
     )
     conversation_id = c.lastrowid
     conn.commit()
@@ -251,6 +254,36 @@ def get_conversation_by_id(conversation_id: int) -> dict | None:
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
     c.execute("SELECT * FROM student_conversations WHERE id = ?", (conversation_id,))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_active_conversation_for_lesson(student_id: int, file_id: int) -> dict | None:
+    """Get the most recent active (not ended) conversation for a student and lesson."""
+    conn = sqlite3.connect('chat_history.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM student_conversations 
+        WHERE student_id = ? AND file_id = ? AND ended_at IS NULL
+        ORDER BY last_message_at DESC
+        LIMIT 1
+    """, (student_id, file_id))
+    row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_most_recent_conversation_for_lesson(student_id: int, file_id: int) -> dict | None:
+    """Get the most recent conversation (including ended ones) for a student and lesson."""
+    conn = sqlite3.connect('chat_history.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM student_conversations 
+        WHERE student_id = ? AND file_id = ?
+        ORDER BY last_message_at DESC
+        LIMIT 1
+    """, (student_id, file_id))
     row = c.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -393,9 +426,48 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
         is_wrong_answer = False
 
         try:
-            # 1. Create a new thread if one doesn't exist
-            current_thread_id = request.thread_id
-            is_first_message = False
+            # 1. Handle lesson-specific conversation lookup
+            if request.file_id:
+                if conversation_id:
+                    # Verify the conversation belongs to this lesson and user
+                    conv = get_conversation_by_id(conversation_id)
+                    if conv and conv.get('student_id') == user_id and conv.get('file_id') == request.file_id:
+                        # Use the provided conversation
+                        current_thread_id = conv['thread_id']
+                        is_first_message = False
+                        # If conversation is ended, create a new one
+                        if conv.get('ended_at'):
+                            conversation_id = None
+                            current_thread_id = None
+                            is_first_message = False
+                    else:
+                        # Invalid conversation, look for active one
+                        conversation_id = None
+                        active_conv = get_active_conversation_for_lesson(user_id, request.file_id)
+                        if active_conv:
+                            conversation_id = active_conv['id']
+                            current_thread_id = active_conv['thread_id']
+                            is_first_message = False
+                        else:
+                            current_thread_id = None
+                            is_first_message = False
+                else:
+                    # Look for active conversation for this lesson
+                    active_conv = get_active_conversation_for_lesson(user_id, request.file_id)
+                    if active_conv:
+                        conversation_id = active_conv['id']
+                        current_thread_id = active_conv['thread_id']
+                        is_first_message = False
+                    else:
+                        # No active conversation, will create new one below
+                        current_thread_id = None
+                        is_first_message = False
+            else:
+                # No file_id provided, use existing thread_id/conversation_id
+                current_thread_id = request.thread_id
+                is_first_message = False
+
+            # 2. Create a new thread if one doesn't exist
             if not current_thread_id:
                 print("Creating new thread...")
                 thread = await client.create_thread(user_assistant_id)
@@ -404,7 +476,7 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
 
                 # Create conversation record if user is logged in
                 if user_id:
-                    conversation_id = create_conversation(user_id, current_thread_id)
+                    conversation_id = create_conversation(user_id, current_thread_id, request.file_id)
 
                 # AUTO-SYNC ALL ACTIVE LESSONS TO STUDENT'S ASSISTANT
                 print(f"Auto-syncing active lessons to student {user_id}'s assistant...")
@@ -661,9 +733,6 @@ async def get_my_conversations(current_user: User = Depends(get_current_user)):
 
 # ===== LESSON MANAGEMENT ENDPOINTS =====
 
-BACKBOARD_API_KEY = os.getenv("BACKBOARD_API_KEY")
-BACKBOARD_BASE_URL = "https://app.backboard.io/api"
-
 @router.get("/available-lessons")
 async def get_available_lessons(current_user: User = Depends(get_current_user)):
     """Get all lessons available to the student (active files from teacher)."""
@@ -842,3 +911,152 @@ async def start_lesson(file_id: int, current_user: User = Depends(get_current_us
         "lesson_id": lesson_id,
         "backboard_doc_id": backboard_doc_id
     }
+
+
+@router.get("/conversations/lesson/{file_id}")
+async def get_conversation_for_lesson(file_id: int, current_user: User = Depends(get_current_user)):
+    """Get the most recent conversation (including ended) for a specific lesson."""
+    if current_user.account_type != "student":
+        raise HTTPException(status_code=403, detail="Only students can view their conversations")
+    
+    # Get student_id
+    conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id FROM accounts WHERE username = ?", (current_user.username,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    student_id = row[0]
+    
+    # Get most recent conversation for this lesson (including ended ones)
+    conv = get_most_recent_conversation_for_lesson(student_id, file_id)
+    
+    if not conv:
+        return {"conversation": None, "messages": []}
+    
+    conversation_id = conv['id']
+    
+    # Get messages for this conversation
+    conn = sqlite3.connect('chat_history.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, role, content, is_wrong, difficulty, created_at
+        FROM conversation_messages
+        WHERE conversation_id = ?
+        ORDER BY id ASC
+    """, (conversation_id,))
+    messages = [dict(row) for row in c.fetchall()]
+    conn.close()
+    
+    return {
+        "conversation": {
+            "id": conv['id'],
+            "thread_id": conv['thread_id'],
+            "file_id": conv.get('file_id'),
+            "started_at": conv['started_at'],
+            "last_message_at": conv['last_message_at'],
+            "has_wrong_answers": bool(conv['has_wrong_answers']),
+            "ended_at": conv.get('ended_at')
+        },
+        "messages": messages
+    }
+
+
+@router.get("/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: int, current_user: User = Depends(get_current_user)):
+    """Get all messages for a specific conversation."""
+    if current_user.account_type != "student":
+        raise HTTPException(status_code=403, detail="Only students can view their conversations")
+    
+    # Get student_id
+    conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id FROM accounts WHERE username = ?", (current_user.username,))
+    row = c.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    student_id = row[0]
+    
+    # Get conversation and verify ownership
+    conversation = get_conversation_by_id(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    if conversation['student_id'] != student_id:
+        raise HTTPException(status_code=403, detail="You can only view your own conversations")
+    
+    # Get messages
+    conn = sqlite3.connect('chat_history.db')
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, role, content, is_wrong, difficulty, created_at
+        FROM conversation_messages
+        WHERE conversation_id = ?
+        ORDER BY id ASC
+    """, (conversation_id,))
+    messages = [dict(row) for row in c.fetchall()]
+    conn.close()
+    
+    return {
+        "conversation": {
+            "id": conversation['id'],
+            "thread_id": conversation['thread_id'],
+            "file_id": conversation.get('file_id'),
+            "started_at": conversation['started_at'],
+            "last_message_at": conversation['last_message_at'],
+            "has_wrong_answers": bool(conversation['has_wrong_answers']),
+            "ended_at": conversation.get('ended_at')
+        },
+        "messages": messages
+    }
+
+
+@router.post("/end-chat/{conversation_id}")
+async def end_chat(conversation_id: int, authorization: Optional[str] = Header(None)):
+    """Mark a conversation as ended in the database."""
+    user_id = get_user_id_from_token(authorization) if authorization else None
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Please log in to end chat")
+    
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        c = conn.cursor()
+        
+        # Verify the conversation belongs to the user
+        c.execute("SELECT student_id FROM student_conversations WHERE id = ?", (conversation_id,))
+        row = c.fetchone()
+        
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        if row[0] != user_id:
+            conn.close()
+            raise HTTPException(status_code=403, detail="You can only end your own conversations")
+        
+        # Update ended_at timestamp
+        c.execute(
+            "UPDATE student_conversations SET ended_at = CURRENT_TIMESTAMP WHERE id = ? AND ended_at IS NULL",
+            (conversation_id,)
+        )
+        
+        if c.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=400, detail="Conversation already ended")
+        
+        conn.commit()
+        conn.close()
+        return {"message": f"Chat session {conversation_id} ended successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

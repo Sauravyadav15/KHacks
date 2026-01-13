@@ -48,6 +48,17 @@ interface Conversation {
   has_wrong_answers: boolean | number;
 }
 
+interface EndedConversation {
+  id: number;
+  student_id: number;
+  student_username?: string;
+  student_name?: string;
+  thread_id: string;
+  started_at: string;
+  ended_at: string;
+  has_wrong_answers: boolean | number;
+}
+
 interface ConversationMessage {
   id: number;
   role: 'user' | 'bot';
@@ -87,6 +98,13 @@ const Teacher: React.FC = () => {
   const [expandedStudents, setExpandedStudents] = useState<Set<number>>(new Set());
   const [expandedConversations, setExpandedConversations] = useState<Set<number>>(new Set());
 
+  // Ended conversations state (for Student Chat Sessions)
+  const [endedConversations, setEndedConversations] = useState<EndedConversation[]>([]);
+  const [endedConversationsLoading, setEndedConversationsLoading] = useState(false);
+  const [expandedEndedSessions, setExpandedEndedSessions] = useState<Set<number>>(new Set());
+  const [selectedEndedThreadId, setSelectedEndedThreadId] = useState<string | null>(null);
+  const [endedChatHistory, setEndedChatHistory] = useState<ConversationMessage[]>([]);
+
   useEffect(() => {
     fetchCategories();
     fetchFiles();
@@ -123,6 +141,7 @@ const Teacher: React.FC = () => {
     if (activeTab === 'students') {
       fetchStudents();
       fetchConversations();
+      fetchEndedConversations();
     }
   }, [activeTab]);
 
@@ -180,6 +199,56 @@ const Teacher: React.FC = () => {
     } finally {
       setMessagesLoading(false);
     }
+  };
+
+  const fetchEndedConversations = async () => {
+    setEndedConversationsLoading(true);
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await axios.get('http://localhost:8000/teacher/ended-conversations', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setEndedConversations(response.data.conversations || []);
+    } catch (err: any) {
+      console.error("Failed to fetch ended conversations", err);
+    } finally {
+      setEndedConversationsLoading(false);
+    }
+  };
+
+  const fetchEndedChatHistory = async (conversationId: number) => {
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      if (!token) return;
+
+      const response = await axios.get(`http://localhost:8000/teacher/conversations/${conversationId}/messages`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      // Filter to show only user messages (student messages)
+      const userMessages = response.data.messages.filter((msg: ConversationMessage) => msg.role === 'user');
+      setEndedChatHistory(userMessages);
+    } catch (err: any) {
+      console.error("Failed to fetch ended chat history", err);
+      setEndedChatHistory([]);
+    }
+  };
+
+  const toggleEndedSession = async (conversationId: number, threadId: string) => {
+    const newExpanded = new Set(expandedEndedSessions);
+    if (newExpanded.has(conversationId)) {
+      newExpanded.delete(conversationId);
+      if (selectedEndedThreadId === threadId) {
+        setSelectedEndedThreadId(null);
+        setEndedChatHistory([]);
+      }
+    } else {
+      newExpanded.add(conversationId);
+      setSelectedEndedThreadId(threadId);
+      await fetchEndedChatHistory(conversationId);
+    }
+    setExpandedEndedSessions(newExpanded);
   };
 
   const getFilteredConversations = () => {
@@ -881,6 +950,99 @@ const Teacher: React.FC = () => {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Student Chat Sessions - Ended Conversations */}
+          <div className="card bg-base-100 shadow-xl">
+            <div className="card-body">
+              <h2 className="card-title text-2xl mb-4">Student Chat Sessions</h2>
+              
+              {endedConversationsLoading && (
+                <div className="flex justify-center py-8">
+                  <span className="loading loading-spinner loading-lg"></span>
+                </div>
+              )}
+
+              {!endedConversationsLoading && endedConversations.length === 0 && (
+                <p className="text-gray-500 italic">No ended chat sessions yet. Students need to end their chats first.</p>
+              )}
+
+              {!endedConversationsLoading && endedConversations.length > 0 && (() => {
+                // Group ended conversations by student
+                const grouped: Record<string, EndedConversation[]> = {};
+                endedConversations.forEach(conv => {
+                  const studentKey = conv.student_name || conv.student_username || 'Student';
+                  if (!grouped[studentKey]) {
+                    grouped[studentKey] = [];
+                  }
+                  grouped[studentKey].push(conv);
+                });
+
+                return (
+                  <div className="space-y-4">
+                    {Object.entries(grouped).map(([studentName, sessions]) => (
+                      <div key={studentName} className="collapse collapse-arrow bg-base-200">
+                        <input type="checkbox" defaultChecked={false} />
+                        <div className="collapse-title text-lg font-semibold">
+                          {studentName} ({sessions.length} session{sessions.length > 1 ? 's' : ''})
+                        </div>
+                        <div className="collapse-content">
+                          <div className="space-y-2 mt-2">
+                            {sessions.map((session) => (
+                              <div key={session.id} className="card bg-base-100 shadow">
+                                <div className="card-body p-4">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <p className="font-semibold">
+                                        Session {session.id} - Thread: {session.thread_id.substring(0, 8)}...
+                                      </p>
+                                      <p className="text-sm text-gray-500">
+                                        Started: {new Date(session.started_at).toLocaleString()} • 
+                                        Ended: {new Date(session.ended_at).toLocaleString()}
+                                      </p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <button
+                                        onClick={() => toggleEndedSession(session.id, session.thread_id)}
+                                        className="btn btn-sm btn-primary"
+                                      >
+                                        {expandedEndedSessions.has(session.id) ? 'Hide' : 'View'} Chat
+                                      </button>
+                                    </div>
+                                  </div>
+                                  
+                                  {expandedEndedSessions.has(session.id) && selectedEndedThreadId === session.thread_id && (
+                                    <div className="mt-4 border-t pt-4">
+                                      <h4 className="font-semibold mb-2">Chat History ({endedChatHistory.length} messages)</h4>
+                                      <div className="bg-base-200 rounded-lg p-4 max-h-96 overflow-y-auto space-y-3">
+                                        {endedChatHistory.length > 0 ? (
+                                          endedChatHistory.map((msg, idx) => (
+                                            <div key={idx} className={`chat ${msg.role === 'user' ? 'chat-end' : 'chat-start'}`}>
+                                              <div className="chat-header opacity-70 text-xs">
+                                                {msg.role === 'user' ? 'Student' : 'Assistant'} • {new Date(msg.created_at).toLocaleString()}
+                                              </div>
+                                              <div className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-primary' : 'chat-bubble-secondary'}`}>
+                                                {msg.content}
+                                              </div>
+                                            </div>
+                                          ))
+                                        ) : (
+                                          <p className="text-gray-500 italic text-center py-4">No messages found.</p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

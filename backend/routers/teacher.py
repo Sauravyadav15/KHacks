@@ -1006,3 +1006,51 @@ async def get_conversation_messages(conversation_id: int, current_user: User = D
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ended-conversations")
+async def get_ended_conversations(current_user: User = Depends(get_current_user)):
+    """
+    Get all ended student conversations grouped by student.
+    Teachers only. Returns only user messages (student messages) in the history.
+    """
+    if current_user.account_type != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can view ended conversations")
+
+    try:
+        # Get all ended conversations with student info
+        conn = sqlite3.connect('chat_history.db')
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, student_id, thread_id, started_at, ended_at, has_wrong_answers
+            FROM student_conversations
+            WHERE ended_at IS NOT NULL
+            ORDER BY ended_at DESC
+        """)
+        conversations = [dict(row) for row in c.fetchall()]
+        conn.close()
+
+        # Get student info for each conversation
+        accounts_conn = sqlite3.connect(ACCOUNTS_DB_PATH)
+        accounts_conn.row_factory = sqlite3.Row
+        ac = accounts_conn.cursor()
+
+        for conv in conversations:
+            ac.execute(
+                "SELECT username, full_name FROM accounts WHERE id = ?",
+                (conv['student_id'],)
+            )
+            student = ac.fetchone()
+            if student:
+                conv['student_username'] = student['username']
+                conv['student_name'] = student['full_name'] or student['username']
+            else:
+                conv['student_username'] = 'Unknown'
+                conv['student_name'] = 'Unknown Student'
+
+        accounts_conn.close()
+
+        return {"conversations": conversations, "count": len(conversations)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
