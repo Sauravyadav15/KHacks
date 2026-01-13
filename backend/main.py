@@ -77,7 +77,9 @@ def init_db():
                   thread_id TEXT,
                   started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  has_wrong_answers BOOLEAN DEFAULT 0)''')
+                  has_wrong_answers BOOLEAN DEFAULT 0,
+                  graph_state TEXT)
+              ''')
 
     # Conversation messages table - stores messages with wrong answer flags and difficulty
     c.execute('''CREATE TABLE IF NOT EXISTS conversation_messages
