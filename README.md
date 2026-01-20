@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # KingHacks26 - Storyteller Test Bench
 
 ## Setup Instructions
@@ -72,3 +73,7 @@ The frontend will be running at `http://localhost:5173` (or the port shown in th
     - `index.css` - Tailwind CSS imports
   - `tailwind.config.js` - Tailwind + DaisyUI configuration
   - `postcss.config.js` - PostCSS configuration
+=======
+# KHacks
+It's Hakathon project, AI-powered learning feedback platform where teachers upload lecture materials and students answer adaptive, concept-focused questions. The system provides hints instead of answers, tracks accuracy and struggle points, and generates summarized reports to help instructors identify learning gaps and adjust teaching strategies.
+>>>>>>> bdbfe990caa12a814a762314f9e94e7463e5c617

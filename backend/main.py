@@ -1,8 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from routers import student, teacher, session, accounts
+from routers import student, teacher, session
 import sqlite3
+
 
 app = FastAPI()
 
@@ -18,7 +19,6 @@ app.add_middleware(
 app.include_router(student.router)
 app.include_router(teacher.router)
 app.include_router(session.router)
-app.include_router(accounts.router)
 
 class MessageInput(BaseModel):
     text: str
@@ -50,8 +50,6 @@ def init_db():
                   category_id INTEGER,
                   uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   is_active BOOLEAN DEFAULT 0,
-                  backboard_doc_id TEXT,
-                  backboard_status TEXT DEFAULT 'not_uploaded',
                   FOREIGN KEY (category_id) REFERENCES categories(id))''')
 
     # Sessions table
@@ -70,64 +68,6 @@ def init_db():
                   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
                   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE)''')
 
-    # Student conversations table - links conversations to student accounts and lessons
-    c.execute('''CREATE TABLE IF NOT EXISTS student_conversations
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  student_id INTEGER NOT NULL,
-                  file_id INTEGER,
-                  thread_id TEXT,
-                  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  has_wrong_answers BOOLEAN DEFAULT 0,
-                  ended_at TIMESTAMP)''')
-    
-    # Add ended_at column if it doesn't exist (migration for existing DBs)
-    try:
-        c.execute("ALTER TABLE student_conversations ADD COLUMN ended_at TIMESTAMP")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-    
-    # Add file_id column if it doesn't exist (migration for existing DBs)
-    try:
-        c.execute("ALTER TABLE student_conversations ADD COLUMN file_id INTEGER")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
-    # Conversation messages table - stores messages with wrong answer flags and difficulty
-    c.execute('''CREATE TABLE IF NOT EXISTS conversation_messages
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  conversation_id INTEGER NOT NULL,
-                  role TEXT NOT NULL,
-                  content TEXT NOT NULL,
-                  is_wrong BOOLEAN DEFAULT 0,
-                  difficulty TEXT,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  FOREIGN KEY (conversation_id) REFERENCES student_conversations(id) ON DELETE CASCADE)''')
-
-    # Add difficulty column if it doesn't exist (migration for existing DBs)
-    try:
-        c.execute("ALTER TABLE conversation_messages ADD COLUMN difficulty TEXT")
-    except sqlite3.OperationalError:
-        pass  # Column already exists
-
-    # Assistant config table - stores teacher instructions for the AI
-    c.execute('''CREATE TABLE IF NOT EXISTS assistant_config
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  instruction_name TEXT NOT NULL,
-                  instruction_value TEXT NOT NULL,
-                  is_active BOOLEAN DEFAULT 1,
-                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-
-    # Student lessons table - tracks which lessons each student has started
-    c.execute('''CREATE TABLE IF NOT EXISTS student_lessons
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  student_id INTEGER NOT NULL,
-                  file_id INTEGER NOT NULL,
-                  backboard_doc_id TEXT,
-                  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  last_accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  UNIQUE(student_id, file_id))''')
-
     conn.commit()
     conn.close()
 
@@ -145,5 +85,29 @@ async def get_chat_history():
         
         # Convert to list of dicts for JSON response
         return [{"role": row["role"], "content": row["content"]} for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/chat")
+async def save_chat(message: MessageInput):
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        c = conn.cursor()
+        
+        # 1. Save User Message
+        c.execute("INSERT INTO messages (role, content) VALUES (?, ?)", 
+                  ('user', message.text))
+        
+        # 2. Generate Bot Reply (Mock logic for now)
+        bot_reply = f"Story continues: You said '{message.text}'..."
+        
+        # 3. Save Bot Message
+        c.execute("INSERT INTO messages (role, content) VALUES (?, ?)", 
+                  ('bot', bot_reply))
+        
+        conn.commit()
+        conn.close()
+
+        return {"reply": bot_reply}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
